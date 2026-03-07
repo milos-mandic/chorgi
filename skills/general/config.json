@@ -1,0 +1,7 @@
+{
+  "name": "general",
+  "description": "General-purpose agent. Handles research, writing, analysis, code, file operations, and any task that doesn't match a more specialized skill.",
+  "tools": ["Bash", "Read", "Write", "Edit", "WebSearch", "WebFetch"],
+  "max_turns": 15,
+  "timeout_seconds": 120
+}

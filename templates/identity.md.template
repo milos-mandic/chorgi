@@ -1,0 +1,11 @@
+# Identity
+
+**Name:** {name}
+**Role:** {role}
+
+## Communication Style
+{style}
+
+## Notes
+- Created by setup.py on first run
+- Edit this file anytime to update how the agent sees you

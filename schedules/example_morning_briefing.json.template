@@ -1,0 +1,9 @@
+{
+  "name": "morning_briefing",
+  "trigger": "daily",
+  "at_hour": 7,
+  "type": "sub_agent",
+  "skill": "general",
+  "prompt": "Check the news for topics relevant to my context. Give me a concise 3-bullet briefing.",
+  "notify_user": true
+}
