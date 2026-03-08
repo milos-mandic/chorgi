@@ -47,13 +47,21 @@ chorgi_v1/
 │   │   ├── CLAUDE.md             # Termux command reference
 │   │   ├── config.json           # tools: Bash,Read,Write — timeout: 120s
 │   │   └── workspace/            # Photos, recordings, scratch files
-│   └── email/                    # Email via Gmail IMAP/SMTP
+│   ├── email/                    # Email via Gmail IMAP/SMTP
+│   │   ├── CLAUDE.md             # CLI command reference
+│   │   ├── config.json           # tools: Bash,Read,Write — timeout: 90s
+│   │   ├── email_client.py       # Stdlib-only IMAP/SMTP client
+│   │   ├── email_cli.py          # CLI wrapper for sub-agent use
+│   │   └── workspace/
+│   │       └── drafts/           # Saved email drafts (JSON)
+│   └── calendar/                 # Google Calendar management
 │       ├── CLAUDE.md             # CLI command reference
 │       ├── config.json           # tools: Bash,Read,Write — timeout: 90s
-│       ├── email_client.py       # Stdlib-only IMAP/SMTP client
-│       ├── email_cli.py          # CLI wrapper for sub-agent use
+│       ├── calendar_client.py    # Google Calendar API wrapper (service account auth)
+│       ├── calendar_cli.py       # CLI wrapper for sub-agent use
+│       ├── scheduler.py          # Smart scheduling engine (slot scoring)
+│       ├── preferences.md        # User scheduling preferences
 │       └── workspace/
-│           └── drafts/           # Saved email drafts (JSON)
 │
 ├── templates/                    # Templates for .personal/ files
 │   ├── identity.md.template      # Placeholders: {name}, {role}, {style}
@@ -364,3 +372,19 @@ The `email` skill manages email via `chorgibot@gmail.com` using stdlib IMAP/SMTP
 - **Email notifications** — scheduler's `_check_emails()` polls every heartbeat (5 min), uses UID tracking (`workspace/email_seen.json`) to avoid duplicates, sends Telegram notifications for new unseen emails
 
 Required env vars: `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (Gmail App Password, 16-char with spaces).
+
+---
+
+## Calendar Skill
+
+The `calendar` skill manages Google Calendar events and provides smart scheduling. Architecture:
+
+- **`calendar_client.py`** — Google Calendar API wrapper using service account auth: list_events, create_event, update_event, delete_event, find_free_slots
+- **`calendar_cli.py`** — CLI wrapper the sub-agent calls via Bash: `list`, `free`, `create`, `update`, `delete`, `suggest`
+- **`scheduler.py`** — Smart scheduling engine that scores time slots based on task type, importance, deadlines, and user preferences
+- **`preferences.md`** — Editable user scheduling preferences (working hours, task type → time-of-day mapping, defaults)
+- **Two calendars**: read-only access to user's private calendar (availability), full access to chorgibot@gmail.com calendar (event creation)
+- **Auth**: Google service account with delegated calendar access
+
+Required env vars: `GOOGLE_SERVICE_ACCOUNT_FILE` (path to service account JSON key), `CALENDAR_OWNER_ID` (user's calendar ID), `CALENDAR_BOT_ID` (chorgibot@gmail.com).
+Dependencies: `google-auth`, `google-api-python-client`.

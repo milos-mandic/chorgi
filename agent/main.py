@@ -51,7 +51,9 @@ def load_secrets():
     # Environment variables override file values
     for key in ("ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_USER_ID",
                  "OPENAI_API_KEY", "WEBHOOK_SECRET", "WEBHOOK_PORT",
-                 "FATHOM_WEBHOOK_SECRET"):
+                 "FATHOM_WEBHOOK_SECRET",
+                 "GOOGLE_SERVICE_ACCOUNT_FILE", "CALENDAR_OWNER_ID",
+                 "CALENDAR_BOT_ID"):
         env_val = os.environ.get(key)
         if env_val:
             secrets[key] = env_val
@@ -237,7 +239,9 @@ def main():
     os.environ["ANTHROPIC_API_KEY"] = secrets["ANTHROPIC_API_KEY"]
     if secrets.get("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
-    for key in ("WEBHOOK_SECRET", "WEBHOOK_PORT", "FATHOM_WEBHOOK_SECRET"):
+    for key in ("WEBHOOK_SECRET", "WEBHOOK_PORT", "FATHOM_WEBHOOK_SECRET",
+                 "GOOGLE_SERVICE_ACCOUNT_FILE", "CALENDAR_OWNER_ID",
+                 "CALENDAR_BOT_ID"):
         if secrets.get(key):
             os.environ[key] = secrets[key]
 
