@@ -22,9 +22,10 @@ chorgi_v1/
 │
 ├── agent/                        # The harness
 │   ├── __init__.py
-│   ├── main.py                   # Entry point — Telegram bot + scheduler + onboarding handlers
+│   ├── main.py                   # Entry point — Telegram bot + scheduler + webhook + onboarding handlers
 │   ├── voice.py                  # Voice support — Whisper STT + OpenAI TTS (stdlib-only)
-│   ├── orchestrator.py           # Message routing (3 routes), sub-agent lifecycle, schedule saving
+│   ├── webhook.py                # Webhook server — threaded HTTP, Fathom handler, signature verification
+│   ├── orchestrator.py           # Message routing (3 routes), sub-agent lifecycle, schedule saving, webhook dispatch
 │   ├── haiku.py                  # Haiku classify+respond (JSON parsing with fallbacks)
 │   ├── api_client.py             # Stdlib-only Anthropic API client (urllib, asyncio.to_thread)
 │   ├── spawner.py                # Claude Code sub-agent launcher (asyncio.create_subprocess_exec)
@@ -38,6 +39,10 @@ chorgi_v1/
 │   │   ├── CLAUDE.md             # Skill behavior definition
 │   │   ├── config.json           # Router metadata: name, description, tools, max_turns, timeout
 │   │   └── workspace/            # Sub-agent scratch directory
+│   ├── fathom/                    # Fathom meeting transcript processor
+│   │   ├── CLAUDE.md             # Summarization instructions (2-4 bullets)
+│   │   ├── config.json           # tools: Read,Bash,Write — timeout: 60s
+│   │   └── workspace/            # Saved transcripts (YYYY-MM-DD_title.txt)
 │   └── phone/                    # Device control via termux-api
 │       ├── CLAUDE.md             # Termux command reference
 │       ├── config.json           # tools: Bash,Read,Write — timeout: 120s
@@ -50,10 +55,12 @@ chorgi_v1/
 │
 ├── schedules/                    # Schedule JSON files (gitignored except templates)
 │
+├── watchdog.sh                  # Process manager — auto-restart, crash loop rollback, cloudflared
+│
 └── .personal/                    # User config (gitignored, created by setup.py or /setup)
     ├── identity.md
     ├── context.md
-    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, OPENAI_API_KEY (optional)
+    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, OPENAI_API_KEY, WEBHOOK_SECRET, WEBHOOK_PORT, FATHOM_WEBHOOK_SECRET
     ├── costs.log                 # Append-only cost tracking
     └── memory/
         ├── long_term.md
@@ -96,6 +103,17 @@ Single Haiku call that classifies intent and optionally responds inline.
 - `promote_to_long_term(haiku_fn)` — sends short_term to Haiku, which returns JSON with `promote` and `remove_lines` lists
 - `read_scratch()` / `clear_scratch()` — scratch pad for sub-agent initiated notifications
 
+### `agent/webhook.py`
+Threaded HTTP server for receiving external webhooks. Merged server + Fathom handler in one file.
+- `WebhookServer` — creates `HTTPServer` on a daemon thread, configurable port (default 8443)
+- `start(loop, orchestrator)` — stores event loop + orchestrator refs, starts server thread. No-op if `WEBHOOK_SECRET` not set.
+- `stop()` — shutdown + join
+- `_trigger_skill(skill, task)` — bridges HTTP thread → async orchestrator via `asyncio.run_coroutine_threadsafe()` (fire-and-forget)
+- Path routing: `GET /<WEBHOOK_SECRET>/health` → 200, `POST /<WEBHOOK_SECRET>/fathom` → Fathom handler
+- `_verify_fathom(headers, body)` — HMAC-SHA256 signature verification (Svix format: `webhook-id`, `webhook-timestamp`, `webhook-signature`), 5-minute replay protection, `whsec_` prefix support
+- `_handle_fathom(headers, body, server)` — verifies signature, parses JSON, extracts speakers/transcript, formats as text, saves to `skills/fathom/workspace/<date>_<title>.txt`, triggers fathom skill
+- Env vars: `WEBHOOK_SECRET` (URL path token), `WEBHOOK_PORT` (default 8443), `FATHOM_WEBHOOK_SECRET` (HMAC key)
+
 ### `agent/orchestrator.py`
 Central coordinator. Key attributes and methods:
 - `__init__(authorized_user_id)` — discovers skills, builds router prompt, stores fingerprint, creates Memory, initializes semaphore (max 2 concurrent)
@@ -110,6 +128,7 @@ Central coordinator. Key attributes and methods:
 - `_save_schedule(schedule)` — sanitizes name, writes JSON to `schedules/`, returns `(ok, detail)`
 - `haiku_query(prompt)` — standalone Haiku call for scheduler
 - `run_scheduled_task(skill, task)` — spawn sub-agent for scheduled work
+- `trigger_webhook_skill(skill, task)` — spawn sub-agent for webhook-triggered task, sends result to user via Telegram, logs to short_term
 - `check_scratch_pad()` — reads scratch.md, notifies user if non-empty, clears
 - `_log_cost(event_type, **kwargs)` — appends to `.personal/costs.log`
 - `send_to_user` — callback set by `main.py` after bot init
@@ -146,7 +165,7 @@ Entry point. Loads secrets, creates Orchestrator, builds Telegram Application.
 - `handle_message` — classify → respond (haiku) or ack + execute (sub_agent)
 - `handle_voice` — download .ogg → Whisper transcribe → classify → respond with voice (TTS) + text
 - `_send_response` — splits messages >4096 chars for Telegram's limit
-- `post_init` — wires `send_to_user` callback, starts scheduler as background task
+- `post_init` — wires `send_to_user` callback, starts scheduler as background task, starts webhook server
 - Handler registration order: `ConversationHandler` (onboarding) first, then text `MessageHandler`, then voice `MessageHandler`
 
 ### `setup.py`
@@ -271,11 +290,34 @@ Sub-agents get full context (everything).
 pip install -r requirements.txt
 python setup.py
 
-# Start the bot
+# Start the bot (direct)
 python agent/main.py
+
+# Start with watchdog (recommended for production)
+nohup ~/projects/chorgi_v1/watchdog.sh &
 ```
 
+The watchdog manages auto-restart (5s delay), crash loop detection (3 exits in 60s → `git checkout . && git clean -fd`), cloudflared tunnel, and `termux-wake-lock`. Logs to `~/.chorgi_v1_watchdog.log`.
+
 Environment variables (`ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`) override `.personal/secrets.env` values.
+
+---
+
+## Webhook System
+
+A threaded HTTP server (`agent/webhook.py`) receives external webhooks and triggers skills. Started automatically in `post_init()` if `WEBHOOK_SECRET` is set.
+
+- **URL format:** `POST https://<domain>/<WEBHOOK_SECRET>/fathom`
+- **Health check:** `GET https://<domain>/<WEBHOOK_SECRET>/health`
+- **Port:** `WEBHOOK_PORT` (default 8443), exposed via cloudflared tunnel
+
+**Fathom integration flow:**
+1. Fathom sends meeting transcript webhook → signature verified (HMAC-SHA256, Svix format)
+2. Transcript formatted as text → saved to `skills/fathom/workspace/<date>_<title>.txt`
+3. Fathom skill triggered → Claude Code summarizes transcript (2-4 bullet points)
+4. Summary sent to user via Telegram
+
+Required env vars: `WEBHOOK_SECRET`, `FATHOM_WEBHOOK_SECRET`. Optional: `WEBHOOK_PORT`.
 
 ---
 

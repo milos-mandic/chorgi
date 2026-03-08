@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from agent.orchestrator import Orchestrator
 from agent.scheduler import Scheduler
+from agent.webhook import WebhookServer
 from agent import voice
 from agent.onboarding import (
     start_onboarding, handle_name, handle_role, handle_style,
@@ -49,7 +50,8 @@ def load_secrets():
                 secrets[key.strip()] = value.strip()
     # Environment variables override file values
     for key in ("ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_USER_ID",
-                 "OPENAI_API_KEY"):
+                 "OPENAI_API_KEY", "WEBHOOK_SECRET", "WEBHOOK_PORT",
+                 "FATHOM_WEBHOOK_SECRET"):
         env_val = os.environ.get(key)
         if env_val:
             secrets[key] = env_val
@@ -198,7 +200,7 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(application: Application):
-    """Called after the bot is initialized — start the scheduler."""
+    """Called after the bot is initialized — start the scheduler and webhook server."""
     orchestrator: Orchestrator = application.bot_data["orchestrator"]
     bot = application.bot
     authorized_user_id = orchestrator.authorized_user_id
@@ -211,6 +213,11 @@ async def post_init(application: Application):
     scheduler = Scheduler(orchestrator)
     asyncio.create_task(scheduler.start())
     logger.info("Scheduler background task created")
+
+    # Start webhook server
+    webhook_server = WebhookServer()
+    webhook_server.start(asyncio.get_running_loop(), orchestrator)
+    application.bot_data["webhook_server"] = webhook_server
 
 
 def main():
@@ -226,10 +233,13 @@ def main():
         logger.error("Run 'python setup.py' first, or set environment variables.")
         return
 
-    # Set API keys for clients
+    # Set API keys and config for clients
     os.environ["ANTHROPIC_API_KEY"] = secrets["ANTHROPIC_API_KEY"]
     if secrets.get("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
+    for key in ("WEBHOOK_SECRET", "WEBHOOK_PORT", "FATHOM_WEBHOOK_SECRET"):
+        if secrets.get(key):
+            os.environ[key] = secrets[key]
 
     orchestrator = Orchestrator(authorized_user_id=secrets["TELEGRAM_USER_ID"])
 

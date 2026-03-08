@@ -1,0 +1,7 @@
+{
+  "name": "fathom",
+  "description": "Processes and summarizes Fathom meeting transcripts",
+  "tools": ["Read", "Bash", "Write"],
+  "max_turns": 5,
+  "timeout_seconds": 60
+}

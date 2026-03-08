@@ -192,6 +192,37 @@ class Orchestrator:
             return f"Error: {result['message']}"
         return result.get("text", "Done, but no output was returned.")
 
+    async def trigger_webhook_skill(self, skill: str, task: str) -> str:
+        """Spawn a sub-agent for a webhook-triggered task. Sends result to user."""
+        skill_config = self.skills.get(skill)
+        if not skill_config:
+            skill_config = self.skills.get("general")
+        if not skill_config:
+            msg = "No skills available for webhook task."
+            logger.error(msg)
+            return msg
+
+        full_context = self.memory.get_full_context()
+        result = await self._spawn_with_limit(skill_config, task, full_context, self.send_to_user)
+
+        elapsed = result.get("elapsed_s")
+        self._log_cost("webhook_task", skill=skill, elapsed_s=elapsed)
+
+        if result.get("error"):
+            response_text = f"Error: {result['message']}"
+        else:
+            response_text = result.get("text", "Done, but no output was returned.")
+
+        self.memory.append_short_term(f"Webhook ({skill}): {task[:100]} → {response_text[:200]}")
+
+        if self.send_to_user:
+            try:
+                await self.send_to_user(f"Fathom meeting summary:\n\n{response_text}")
+            except Exception as e:
+                logger.error("Failed to send webhook result to user: %s", e)
+
+        return response_text
+
     async def reload_skills(self):
         """Re-discover skills if any were added, removed, or modified."""
         try:
