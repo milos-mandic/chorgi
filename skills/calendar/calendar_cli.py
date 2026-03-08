@@ -72,11 +72,19 @@ def cmd_free(args):
 
 def cmd_create(args):
     """Create an event on the bot calendar."""
-    _, bot_id = calendar_client._get_calendar_ids()
+    owner_id, bot_id = calendar_client._get_calendar_ids()
     start = _parse_dt(args.start)
     end = _parse_dt(args.end)
+    attendees = []
+    if args.attendees:
+        attendees.extend(e.strip() for e in args.attendees.split(",") if e.strip())
+    if args.invite_owner:
+        if owner_id not in attendees:
+            attendees.append(owner_id)
     event = calendar_client.create_event(
-        bot_id, args.title, start, end, description=args.description
+        bot_id, args.title, start, end,
+        description=args.description,
+        attendees=attendees or None,
     )
     print(json.dumps(event, indent=2))
 
@@ -147,6 +155,10 @@ def main():
     p.add_argument("start", help="Start time (YYYY-MM-DD HH:MM)")
     p.add_argument("end", help="End time (YYYY-MM-DD HH:MM)")
     p.add_argument("--description", help="Event description", default=None)
+    p.add_argument("--attendees", help="Comma-separated email addresses to invite",
+                    default=None)
+    p.add_argument("--invite-owner", action="store_true",
+                    help="Auto-add calendar owner (CALENDAR_OWNER_ID) as attendee")
     p.set_defaults(func=cmd_create)
 
     # update

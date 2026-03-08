@@ -57,8 +57,9 @@ anything you can answer well from your training data alone.
 Route "sub_agent": anything requiring tool use, current information, file ops,
 multi-step tasks, research, code, analysis, or real-world actions.
 
-Route "schedule": the user wants to create, set up, or configure a recurring
-task or reminder. Extract the schedule definition from their message.
+Route "schedule": the user wants to create a RECURRING or REPEATING task
+(e.g., "every morning", "daily", "weekly", "every 2 hours"). One-time tasks,
+single events, or calendar entries go to sub_agent with the calendar skill.
 
 Available skills:
 {skills_block}

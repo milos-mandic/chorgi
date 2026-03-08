@@ -11,6 +11,8 @@ Run commands via Bash — all calendar operations go through `calendar_cli.py`.
 - Always read `preferences.md` before making scheduling decisions
 - Events are created on the **bot calendar** (chorgibot@gmail.com)
 - The **owner calendar** is read-only (used to check availability)
+- **ALWAYS** check availability (`free` or `list --calendar owner`) before creating any event
+- **ALWAYS** use `--invite-owner` when creating events so the user gets a Google Calendar invite
 
 ## CLI Commands
 
@@ -28,9 +30,11 @@ Finds free slots of M minutes across both calendars in the next N days.
 
 ### Create an event
 ```bash
-python calendar_cli.py create "<title>" "<start>" "<end>" [--description "..."]
+python calendar_cli.py create "<title>" "<start>" "<end>" [--description "..."] [--attendees "a@x.com,b@x.com"] [--invite-owner]
 ```
 Creates event on bot calendar. Times in "YYYY-MM-DD HH:MM" format.
+- `--invite-owner`: adds the calendar owner as an attendee (sends Google Calendar invite)
+- `--attendees`: comma-separated list of additional email addresses to invite
 
 ### Update an event
 ```bash
@@ -52,10 +56,10 @@ Returns ranked suggestions with scores and reasoning based on preferences + avai
 
 When the user wants to schedule something:
 
-1. **Specific time given** → create the event directly
-2. **No time given** → run `suggest` to find optimal slots
-3. Show the proposed time with reasoning
-4. Create the event on the bot calendar
+1. **Check availability first** → run `free` or `list --calendar owner` to see conflicts
+2. **Specific time given** → verify it's free, then create the event
+3. **No time given** → run `suggest` to find optimal slots
+4. Create the event on the bot calendar with `--invite-owner`
 5. Report: event title, date/time, and calendar link
 
 ## Smart Scheduling

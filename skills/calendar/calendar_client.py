@@ -97,6 +97,7 @@ def create_event(
     start: datetime,
     end: datetime,
     description: str | None = None,
+    attendees: list[str] | None = None,
 ) -> dict:
     """Create an event on the specified calendar."""
     service = get_service()
@@ -107,8 +108,13 @@ def create_event(
     }
     if description:
         body["description"] = description
+    if attendees:
+        body["attendees"] = [{"email": email} for email in attendees]
 
-    event = service.events().insert(calendarId=calendar_id, body=body).execute()
+    insert_kwargs = {"calendarId": calendar_id, "body": body}
+    if attendees:
+        insert_kwargs["sendUpdates"] = "all"
+    event = service.events().insert(**insert_kwargs).execute()
     return _event_to_dict(event)
 
 
