@@ -44,7 +44,7 @@ class WebhookServer:
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format, *args):
-                logger.debug("Webhook HTTP: " + format, *args)
+                logger.info("Webhook HTTP: " + format, *args)
 
             def do_GET(self):
                 parts = _parse_path(self.path, secret)
@@ -63,8 +63,10 @@ class WebhookServer:
                     self.end_headers()
 
             def do_POST(self):
+                logger.info("Webhook POST received: path=%s", self.path)
                 parts = _parse_path(self.path, secret)
                 if parts is None:
+                    logger.warning("Webhook POST path mismatch: %s", self.path)
                     self.send_response(404)
                     self.end_headers()
                     return
@@ -158,14 +160,18 @@ def _verify_fathom(headers: dict[str, str], body: bytes) -> bool:
     signature = headers.get("webhook-signature", "")
 
     if not msg_id or not timestamp or not signature:
+        logger.warning("Fathom verify: missing headers — id=%r ts=%r sig=%r", msg_id, timestamp, signature)
         return False
 
     # Replay protection: reject timestamps older than 5 minutes
     try:
         ts = int(timestamp)
-        if abs(time.time() - ts) > 300:
+        drift = abs(time.time() - ts)
+        if drift > 300:
+            logger.warning("Fathom verify: timestamp too old (drift=%.0fs)", drift)
             return False
     except (ValueError, TypeError):
+        logger.warning("Fathom verify: invalid timestamp %r", timestamp)
         return False
 
     # Strip whsec_ prefix and base64-decode the secret

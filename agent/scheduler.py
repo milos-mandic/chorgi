@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 SCHEDULES_DIR = Path(__file__).parent.parent / "schedules"
 HEARTBEAT_INTERVAL = 300  # 5 minutes
+
+# Add email skill to path for direct import (stdlib-only, no sub-agent needed)
+_EMAIL_SKILL_DIR = Path(__file__).parent.parent / "skills" / "email"
+if str(_EMAIL_SKILL_DIR) not in sys.path:
+    sys.path.insert(0, str(_EMAIL_SKILL_DIR))
 
 
 class Scheduler:
@@ -41,6 +47,7 @@ class Scheduler:
         await memory.promote_to_long_term(self.orchestrator.haiku_query)
         await self.orchestrator.check_scratch_pad()
         await self.orchestrator.reload_skills()
+        await self._check_emails()
 
         logger.info("Heartbeat complete")
 
@@ -110,6 +117,24 @@ class Scheduler:
             await self.orchestrator.send_to_user(f"[{name}]\n\n{result}")
 
         logger.info(f"Schedule {name} completed")
+
+    async def _check_emails(self):
+        """Poll for new unseen emails and notify user via Telegram."""
+        try:
+            import email_client
+            new = await asyncio.to_thread(email_client.check_new_emails)
+            if not new:
+                return
+            for e in new:
+                sender = e.get("from", "unknown")
+                subject = e.get("subject", "(no subject)")
+                preview = e.get("body_preview", "")
+                msg = f"\U0001f4e7 New email from {sender}\nSubject: {subject}\n{preview}"
+                if self.orchestrator.send_to_user:
+                    await self.orchestrator.send_to_user(msg)
+            logger.info(f"Notified user of {len(new)} new email(s)")
+        except Exception as e:
+            logger.debug(f"Email check skipped: {e}")
 
     def _mark_ran(self, schedule_path: Path, now: datetime):
         """Update last_run in the schedule JSON file."""

@@ -43,10 +43,17 @@ chorgi_v1/
 │   │   ├── CLAUDE.md             # Summarization instructions (2-4 bullets)
 │   │   ├── config.json           # tools: Read,Bash,Write — timeout: 60s
 │   │   └── workspace/            # Saved transcripts (YYYY-MM-DD_title.txt)
-│   └── phone/                    # Device control via termux-api
-│       ├── CLAUDE.md             # Termux command reference
-│       ├── config.json           # tools: Bash,Read,Write — timeout: 120s
-│       └── workspace/            # Photos, recordings, scratch files
+│   ├── phone/                    # Device control via termux-api
+│   │   ├── CLAUDE.md             # Termux command reference
+│   │   ├── config.json           # tools: Bash,Read,Write — timeout: 120s
+│   │   └── workspace/            # Photos, recordings, scratch files
+│   └── email/                    # Email via Gmail IMAP/SMTP
+│       ├── CLAUDE.md             # CLI command reference
+│       ├── config.json           # tools: Bash,Read,Write — timeout: 90s
+│       ├── email_client.py       # Stdlib-only IMAP/SMTP client
+│       ├── email_cli.py          # CLI wrapper for sub-agent use
+│       └── workspace/
+│           └── drafts/           # Saved email drafts (JSON)
 │
 ├── templates/                    # Templates for .personal/ files
 │   ├── identity.md.template      # Placeholders: {name}, {role}, {style}
@@ -60,7 +67,7 @@ chorgi_v1/
 └── .personal/                    # User config (gitignored, created by setup.py or /setup)
     ├── identity.md
     ├── context.md
-    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, OPENAI_API_KEY, WEBHOOK_SECRET, WEBHOOK_PORT, FATHOM_WEBHOOK_SECRET
+    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, OPENAI_API_KEY, WEBHOOK_SECRET, WEBHOOK_PORT, FATHOM_WEBHOOK_SECRET, GMAIL_ADDRESS, GMAIL_APP_PASSWORD
     ├── costs.log                 # Append-only cost tracking
     └── memory/
         ├── long_term.md
@@ -135,7 +142,8 @@ Central coordinator. Key attributes and methods:
 
 ### `agent/scheduler.py`
 - `Scheduler(orchestrator)` — heartbeat loop every 300s
-- `_heartbeat()` — prune short_term → promote to long_term → check scratch pad → reload skills
+- `_heartbeat()` — prune short_term → promote to long_term → check scratch pad → reload skills → check emails
+- `_check_emails()` — polls for unseen emails via `email_client.check_new_emails()`, sends Telegram notification for each new email (non-critical, wrapped in try/except)
 - `_check_schedules()` — scans `schedules/*.json`, evaluates triggers, executes due tasks
 - `_is_due(schedule, now)` — supports `daily` (at_hour, UTC) and `interval` (interval_minutes) triggers
 - `_execute(schedule)` — dispatches to `haiku_query` or `run_scheduled_task`, optionally notifies user
@@ -343,3 +351,16 @@ The `phone` skill enables device control via `termux-api` commands. Capabilities
 - **Notifications:** System notification list, toast messages
 
 Requires the `termux-api` package and the Termux:API Android app to be installed.
+
+---
+
+## Email Skill
+
+The `email` skill manages email via `chorgibot@gmail.com` using stdlib IMAP/SMTP. Architecture:
+
+- **`email_client.py`** — shared library (stdlib-only) with IMAP/SMTP functions: fetch_unread, fetch_recent, search_emails, read_email, send_email, send_html_email, list_folders, check_new_emails
+- **`email_cli.py`** — CLI wrapper the sub-agent calls via Bash: `check`, `read`, `search`, `send`, `draft`, `list-drafts`, `send-draft`, `folders`
+- **Draft workflow** — drafts saved as JSON in `workspace/drafts/`, reviewed by user, then sent via `send-draft`
+- **Email notifications** — scheduler's `_check_emails()` polls every heartbeat (5 min), uses UID tracking (`workspace/email_seen.json`) to avoid duplicates, sends Telegram notifications for new unseen emails
+
+Required env vars: `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (Gmail App Password, 16-char with spaces).

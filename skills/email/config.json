@@ -1,0 +1,7 @@
+{
+  "name": "email",
+  "description": "Email communication. Send, read, search, and draft emails using chorgibot@gmail.com. Handles email composition, inbox management, and email search.",
+  "tools": ["Bash", "Read", "Write"],
+  "max_turns": 10,
+  "timeout_seconds": 90
+}
