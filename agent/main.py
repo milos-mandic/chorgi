@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from agent.orchestrator import Orchestrator
 from agent.scheduler import Scheduler
+from agent import voice
 from agent.onboarding import (
     start_onboarding, handle_name, handle_role, handle_style,
     handle_projects, handle_confirm, cancel,
@@ -47,7 +48,8 @@ def load_secrets():
                 key, value = line.split("=", 1)
                 secrets[key.strip()] = value.strip()
     # Environment variables override file values
-    for key in ("ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_USER_ID"):
+    for key in ("ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_USER_ID",
+                 "OPENAI_API_KEY"):
         env_val = os.environ.get(key)
         if env_val:
             secrets[key] = env_val
@@ -125,6 +127,76 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             logger.error("Failed to send error message to user", exc_info=True)
 
 
+async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming Telegram voice messages."""
+    ogg_in = None
+    ogg_out = None
+    try:
+        orchestrator: Orchestrator = ctx.bot_data["orchestrator"]
+        user_id = str(update.effective_user.id)
+        msg_id = update.message.message_id
+
+        # Download voice file
+        voice_file = await update.message.voice.get_file()
+        ogg_in = Path(f"/tmp/chorgi_v1_voice_{msg_id}.ogg")
+        await voice_file.download_to_drive(str(ogg_in))
+
+        # Transcribe
+        try:
+            transcription = await asyncio.to_thread(voice.transcribe_audio, ogg_in)
+        except RuntimeError as e:
+            logger.error("Transcription failed: %s", e)
+            await update.message.reply_text(
+                "Couldn't transcribe your voice message. "
+                "Make sure OPENAI_API_KEY is configured."
+            )
+            return
+
+        # Show the user what was heard
+        await update.message.reply_text(f"\U0001f3a4 {transcription}")
+
+        # Route through normal message flow
+        classification = await orchestrator.classify(transcription, user_id)
+
+        if classification["type"] == "rejected":
+            return
+
+        if classification["type"] == "error":
+            response_text = classification["response"]
+        elif classification["type"] == "haiku":
+            response_text = classification["response"]
+        else:
+            await update.message.reply_text("On it.")
+            result = await orchestrator.execute_sub_agent(classification)
+            response_text = result["response"]
+
+        # Try to generate and send voice response
+        try:
+            ogg_out = await asyncio.to_thread(voice.tts_generate, response_text[:4096])
+            with open(ogg_out, "rb") as f:
+                await update.message.reply_voice(voice=f)
+        except RuntimeError as e:
+            logger.warning("TTS failed, sending text only: %s", e)
+
+        # Always send text as well
+        await _send_response(update, response_text)
+
+    except Exception:
+        logger.error("Unhandled error in handle_voice", exc_info=True)
+        try:
+            await update.message.reply_text("Something went wrong. Please try again.")
+        except Exception:
+            logger.error("Failed to send error message to user", exc_info=True)
+    finally:
+        # Clean up temp files
+        for path in (ogg_in, ogg_out):
+            if path:
+                try:
+                    Path(path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
 async def post_init(application: Application):
     """Called after the bot is initialized — start the scheduler."""
     orchestrator: Orchestrator = application.bot_data["orchestrator"]
@@ -154,8 +226,10 @@ def main():
         logger.error("Run 'python setup.py' first, or set environment variables.")
         return
 
-    # Set Anthropic API key for the client
+    # Set API keys for clients
     os.environ["ANTHROPIC_API_KEY"] = secrets["ANTHROPIC_API_KEY"]
+    if secrets.get("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
 
     orchestrator = Orchestrator(authorized_user_id=secrets["TELEGRAM_USER_ID"])
 
@@ -182,6 +256,7 @@ def main():
     )
     app.add_handler(onboarding_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     logger.info("Bot starting... Press Ctrl+C to stop.")
     app.run_polling()

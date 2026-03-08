@@ -23,6 +23,7 @@ chorgi_v1/
 ├── agent/                        # The harness
 │   ├── __init__.py
 │   ├── main.py                   # Entry point — Telegram bot + scheduler + onboarding handlers
+│   ├── voice.py                  # Voice support — Whisper STT + OpenAI TTS (stdlib-only)
 │   ├── orchestrator.py           # Message routing (3 routes), sub-agent lifecycle, schedule saving
 │   ├── haiku.py                  # Haiku classify+respond (JSON parsing with fallbacks)
 │   ├── api_client.py             # Stdlib-only Anthropic API client (urllib, asyncio.to_thread)
@@ -33,10 +34,14 @@ chorgi_v1/
 │   └── skill_registry.py         # Auto-discovery, fingerprinting, router prompt generation
 │
 ├── skills/
-│   └── general/                  # Ships with repo — the starter skill
-│       ├── CLAUDE.md             # Skill behavior definition
-│       ├── config.json           # Router metadata: name, description, tools, max_turns, timeout
-│       └── workspace/            # Sub-agent scratch directory
+│   ├── general/                  # Ships with repo — the starter skill
+│   │   ├── CLAUDE.md             # Skill behavior definition
+│   │   ├── config.json           # Router metadata: name, description, tools, max_turns, timeout
+│   │   └── workspace/            # Sub-agent scratch directory
+│   └── phone/                    # Device control via termux-api
+│       ├── CLAUDE.md             # Termux command reference
+│       ├── config.json           # tools: Bash,Read,Write — timeout: 120s
+│       └── workspace/            # Photos, recordings, scratch files
 │
 ├── templates/                    # Templates for .personal/ files
 │   ├── identity.md.template      # Placeholders: {name}, {role}, {style}
@@ -48,7 +53,7 @@ chorgi_v1/
 └── .personal/                    # User config (gitignored, created by setup.py or /setup)
     ├── identity.md
     ├── context.md
-    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID
+    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, OPENAI_API_KEY (optional)
     ├── costs.log                 # Append-only cost tracking
     └── memory/
         ├── long_term.md
@@ -80,6 +85,7 @@ Single Haiku call that classifies intent and optionally responds inline.
 - Passes dynamic context + task via stdin; Claude Code reads skill's `CLAUDE.md` automatically from `--cwd`
 - Returns `{"text": ..., "elapsed_s": ...}` on success, `{"error": True, "message": ..., "elapsed_s": ...}` on failure
 - Handles timeout (kills process), non-JSON output (returns raw text), and various JSON output shapes
+- **Termux fixes:** Ensures `/tmp` exists (Claude Code sandbox requirement) and strips the `CLAUDECODE` env var to prevent "nested session" errors when spawning sub-agents
 
 ### `agent/memory.py`
 - `Memory(personal_dir)` — manages all `.personal/` file I/O
@@ -125,6 +131,12 @@ Telegram ConversationHandler for profile setup (4 fields: name, role, style, pro
 - `cancel` → handles `/cancel`
 - `write_profile(data)` → reads templates, does `str.replace()` for placeholders, writes `identity.md` and `context.md`, ensures memory dir exists
 
+### `agent/voice.py`
+Voice support — OpenAI Whisper transcription + TTS via stdlib HTTP. No `openai` SDK.
+- `transcribe_audio(audio_path, timeout=90)` — POST to Whisper API, returns transcript text
+- `tts_generate(text, voice="alloy", timeout=30)` — POST to TTS API, returns path to .ogg file in /tmp
+- Both raise `RuntimeError` if `OPENAI_API_KEY` is missing or API fails
+
 ### `agent/main.py`
 Entry point. Loads secrets, creates Orchestrator, builds Telegram Application.
 - `load_secrets()` — reads `.personal/secrets.env`, env vars override
@@ -132,9 +144,10 @@ Entry point. Loads secrets, creates Orchestrator, builds Telegram Application.
 - `setup_command` — `/setup` handler, auth check → `start_onboarding()`
 - `auto_onboard` — auto-triggers onboarding on first message if no profile
 - `handle_message` — classify → respond (haiku) or ack + execute (sub_agent)
+- `handle_voice` — download .ogg → Whisper transcribe → classify → respond with voice (TTS) + text
 - `_send_response` — splits messages >4096 chars for Telegram's limit
 - `post_init` — wires `send_to_user` callback, starts scheduler as background task
-- Handler registration order: `ConversationHandler` (onboarding) first, then catch-all `MessageHandler`
+- Handler registration order: `ConversationHandler` (onboarding) first, then text `MessageHandler`, then voice `MessageHandler`
 
 ### `setup.py`
 CLI onboarding script. Collects API keys + profile info interactively, creates `.personal/` directory with all files. Checks for `claude` CLI in PATH. Requires Python 3.11+.
@@ -152,6 +165,8 @@ Three routes, classified by a single Haiku call:
 | `sub_agent` | Tool use, research, code, file ops, multi-step tasks | ~15-90s (ack in ~1s) |
 
 The `schedule` route returns a complete schedule JSON from Haiku, which the orchestrator writes to `schedules/`. It resolves as a haiku-type response (no changes needed in main.py).
+
+**Voice messages:** When a user sends a Telegram voice message, `handle_voice()` downloads the .ogg, transcribes it via OpenAI Whisper, routes the text through normal classification, then responds with both a voice message (OpenAI TTS) and text. Requires `OPENAI_API_KEY` (optional — voice features degrade gracefully without it).
 
 ---
 
@@ -261,3 +276,28 @@ python agent/main.py
 ```
 
 Environment variables (`ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`) override `.personal/secrets.env` values.
+
+---
+
+## Termux / Android Notes
+
+This bot runs on Android via Termux. Key platform considerations:
+
+- **`/tmp` directory:** Claude Code's sandbox requires `/tmp` to exist. Termux doesn't provide one natively, but the interactive shell alias (`proot -b $PREFIX/tmp:/tmp claude`) creates a real `/tmp` dir on `/data` that persists. The spawner calls `os.makedirs("/tmp", exist_ok=True)` to ensure it exists for sub-agents.
+- **No `proot` for sub-agents:** Using `proot` to wrap sub-agent calls adds massive CPU overhead (~2x slower). Since `/tmp` persists as a real directory, sub-agents run `claude` directly without `proot`.
+- **`CLAUDECODE` env var:** Claude Code sets this in its environment to detect nested sessions. The spawner strips it so sub-agents don't refuse to start. This is safe because sub-agents are independent processes, not truly nested.
+- **`asyncio.create_subprocess_exec` bypasses shell aliases:** The bot spawns sub-agents via `asyncio.create_subprocess_exec`, which doesn't read `.zshrc` aliases. All Termux workarounds must be applied in `spawner.py` directly.
+
+---
+
+## Phone Skill
+
+The `phone` skill enables device control via `termux-api` commands. Capabilities:
+
+- **Hardware control:** Flashlight, vibration, brightness, volume
+- **Communication:** Send/read SMS, text-to-speech, clipboard
+- **Sensors:** Battery status, WiFi info, GPS location, barometer, light, proximity, temperature
+- **Media:** Camera photos (front/back), microphone recording
+- **Notifications:** System notification list, toast messages
+
+Requires the `termux-api` package and the Termux:API Android app to be installed.
