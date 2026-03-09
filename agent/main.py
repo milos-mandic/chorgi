@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -52,7 +53,7 @@ def load_secrets():
     for key in ("ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_USER_ID",
                  "OPENAI_API_KEY", "WEBHOOK_SECRET", "WEBHOOK_PORT",
                  "FATHOM_WEBHOOK_SECRET",
-                 "GOOGLE_SERVICE_ACCOUNT_FILE", "CALENDAR_OWNER_ID",
+                 "GOOGLE_OAUTH_CREDENTIALS", "CALENDAR_OWNER_ID",
                  "CALENDAR_BOT_ID"):
         env_val = os.environ.get(key)
         if env_val:
@@ -60,13 +61,62 @@ def load_secrets():
     return secrets
 
 
+def md_to_telegram_html(text: str) -> str:
+    """Convert common markdown to Telegram-supported HTML."""
+    # Escape HTML entities first
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+
+    # Code blocks: ```...``` → <pre>...</pre>
+    text = re.sub(r"```(?:\w*)\n?(.*?)```", r"<pre>\1</pre>", text, flags=re.DOTALL)
+
+    # Inline code: `...` → <code>...</code>
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+
+    # Bold: **...** → <b>...</b>
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+
+    # List items: - item → • item
+    text = re.sub(r"^- ", "• ", text, flags=re.MULTILINE)
+
+    return text
+
+
+def _strip_html(html: str) -> str:
+    """Strip Telegram HTML tags back to plain text."""
+    text = html
+    for tag in ("b", "pre", "code"):
+        text = text.replace(f"<{tag}>", "").replace(f"</{tag}>", "")
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    return text
+
+
+def _smart_chunk(text: str, limit: int = 4096) -> list[str]:
+    """Split text into chunks at newline boundaries to avoid breaking HTML tags."""
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        cut = text.rfind("\n", 0, limit)
+        if cut <= 0:
+            cut = limit
+        chunks.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+    return chunks
+
+
 async def _send_response(update: Update, response: str):
-    """Send a response, splitting into chunks if needed for Telegram's limit."""
-    if len(response) > 4096:
-        for i in range(0, len(response), 4096):
-            await update.message.reply_text(response[i:i + 4096])
-    else:
-        await update.message.reply_text(response)
+    """Send a response with HTML formatting, falling back to plain text."""
+    html = md_to_telegram_html(response)
+    for chunk in _smart_chunk(html):
+        try:
+            await update.message.reply_text(chunk, parse_mode="HTML")
+        except Exception:
+            await update.message.reply_text(_strip_html(chunk))
 
 
 class _NeedsOnboardingFilter(filters.MessageFilter):
@@ -208,7 +258,16 @@ async def post_init(application: Application):
     authorized_user_id = orchestrator.authorized_user_id
 
     async def send_to_user(message: str):
-        await bot.send_message(chat_id=authorized_user_id, text=message)
+        html = md_to_telegram_html(message)
+        for chunk in _smart_chunk(html):
+            try:
+                await bot.send_message(
+                    chat_id=authorized_user_id, text=chunk, parse_mode="HTML"
+                )
+            except Exception:
+                await bot.send_message(
+                    chat_id=authorized_user_id, text=_strip_html(chunk)
+                )
 
     orchestrator.send_to_user = send_to_user
 
@@ -240,7 +299,7 @@ def main():
     if secrets.get("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
     for key in ("WEBHOOK_SECRET", "WEBHOOK_PORT", "FATHOM_WEBHOOK_SECRET",
-                 "GOOGLE_SERVICE_ACCOUNT_FILE", "CALENDAR_OWNER_ID",
+                 "GOOGLE_OAUTH_CREDENTIALS", "CALENDAR_OWNER_ID",
                  "CALENDAR_BOT_ID"):
         if secrets.get(key):
             os.environ[key] = secrets[key]

@@ -10,6 +10,16 @@ from pathlib import Path
 
 # Add skill directory to path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Load secrets.env if env vars aren't already set (direct CLI invocation)
+_SECRETS_PATH = Path(__file__).resolve().parent.parent.parent / ".personal" / "secrets.env"
+if not os.environ.get("CALENDAR_OWNER_ID") and _SECRETS_PATH.exists():
+    for _line in _SECRETS_PATH.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"'))
+
 import calendar_client
 import scheduler
 
@@ -75,6 +85,22 @@ def cmd_create(args):
     owner_id, bot_id = calendar_client._get_calendar_ids()
     start = _parse_dt(args.start)
     end = _parse_dt(args.end)
+
+    # Enforce availability check — refuse to create on busy time
+    if not args.force:
+        conflicts = calendar_client.check_conflicts(owner_id, bot_id, start, end)
+        if conflicts:
+            conflict_info = [
+                {"summary": c["summary"], "start": c["start"], "end": c["end"]}
+                for c in conflicts
+            ]
+            print(json.dumps({
+                "error": "Time conflict detected — cannot create event during busy time.",
+                "conflicts": conflict_info,
+                "hint": "Use --force to override, or choose a different time.",
+            }, indent=2))
+            return
+
     attendees = []
     if args.attendees:
         attendees.extend(e.strip() for e in args.attendees.split(",") if e.strip())
@@ -86,6 +112,13 @@ def cmd_create(args):
         description=args.description,
         attendees=attendees or None,
     )
+    invite_status = event.get("invite_status", "")
+    if invite_status == "sent":
+        event["note"] = "Calendar invite sent to all attendees."
+    elif invite_status == "no_email":
+        event["note"] = "Event created with attendees listed, but invite emails could not be sent."
+    elif invite_status == "no_attendees":
+        event["note"] = "Event created, but attendees could not be added. Check the calendar link to add them manually."
     print(json.dumps(event, indent=2))
 
 
@@ -159,6 +192,8 @@ def main():
                     default=None)
     p.add_argument("--invite-owner", action="store_true",
                     help="Auto-add calendar owner (CALENDAR_OWNER_ID) as attendee")
+    p.add_argument("--force", action="store_true",
+                    help="Create even if there are conflicting events")
     p.set_defaults(func=cmd_create)
 
     # update

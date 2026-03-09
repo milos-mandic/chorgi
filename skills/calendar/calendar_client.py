@@ -1,33 +1,48 @@
-"""Google Calendar API client using service account authentication."""
+"""Google Calendar API client using OAuth2 user credentials."""
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from google.oauth2 import service_account
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 log = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
-# Cache built services to avoid re-auth on every call
-_service_cache = {}
+# Default paths — can be overridden via env vars
+_SKILL_DIR = Path(__file__).parent
+_DEFAULT_CREDENTIALS = _SKILL_DIR / "oauth_credentials.json"
+_DEFAULT_TOKEN = _SKILL_DIR / "token.json"
+
+# Cache built service
+_service = None
 
 
-def _get_service_account_path() -> str:
-    """Return path to service account JSON key file."""
-    path = os.environ.get(
-        "GOOGLE_SERVICE_ACCOUNT_FILE",
-        str(Path(__file__).parent / "service_account.json"),
-    )
-    if not os.path.exists(path):
-        raise RuntimeError(
-            f"Service account key not found: {path}\n"
-            "Download it from GCP console and place it at the path above."
-        )
-    return path
+def _resolve_path(env_var: str, default: Path) -> str:
+    """Resolve a path from env var or default, handling relative paths."""
+    val = os.environ.get(env_var)
+    if val is None:
+        return str(default)
+    p = Path(val)
+    if not p.is_absolute():
+        # Resolve relative to project root (2 levels up from skill dir)
+        p = _SKILL_DIR.parent.parent / p
+    return str(p)
+
+
+def _get_credentials_path() -> str:
+    return _resolve_path("GOOGLE_OAUTH_CREDENTIALS", _DEFAULT_CREDENTIALS)
+
+
+def _get_token_path() -> str:
+    return _resolve_path("GOOGLE_OAUTH_TOKEN", _DEFAULT_TOKEN)
 
 
 def _get_calendar_ids() -> tuple[str, str]:
@@ -41,18 +56,54 @@ def _get_calendar_ids() -> tuple[str, str]:
     return owner, bot
 
 
+def _load_credentials() -> Credentials:
+    """Load OAuth2 credentials, refreshing or re-authing as needed."""
+    token_path = _get_token_path()
+    creds = None
+
+    # Load existing token
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+
+    # Refresh or re-auth
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except Exception as e:
+            log.warning("Token refresh failed: %s — re-authenticating", e)
+            creds = None
+
+    if not creds or not creds.valid:
+        creds_path = _get_credentials_path()
+        if not os.path.exists(creds_path):
+            raise RuntimeError(
+                f"OAuth credentials not found: {creds_path}\n"
+                "Download OAuth client credentials from GCP console:\n"
+                "  APIs & Services → Credentials → Create OAuth client ID → Desktop app\n"
+                "Save the JSON file as oauth_credentials.json in the calendar skill directory."
+            )
+        flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
+        creds = flow.run_local_server(
+            port=8085, open_browser=False,
+            authorization_prompt_message="\nOpen this URL in Chrome to authorize:\n{url}\n",
+        )
+
+    # Save token for next time
+    with open(token_path, "w") as f:
+        f.write(creds.to_json())
+
+    return creds
+
+
 def get_service():
     """Build and cache an authenticated Calendar API service."""
-    if "calendar" in _service_cache:
-        return _service_cache["calendar"]
+    global _service
+    if _service is not None:
+        return _service
 
-    sa_path = _get_service_account_path()
-    credentials = service_account.Credentials.from_service_account_file(
-        sa_path, scopes=SCOPES
-    )
-    service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
-    _service_cache["calendar"] = service
-    return service
+    creds = _load_credentials()
+    _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+    return _service
 
 
 def list_events(
@@ -99,7 +150,12 @@ def create_event(
     description: str | None = None,
     attendees: list[str] | None = None,
 ) -> dict:
-    """Create an event on the specified calendar."""
+    """Create an event on the specified calendar.
+
+    With OAuth2 user credentials, attendee invites work directly —
+    Google sends invite emails as the authenticated user.
+    Returns an invite_status field: "sent" or "no_attendees".
+    """
     service = get_service()
     body = {
         "summary": summary,
@@ -108,14 +164,18 @@ def create_event(
     }
     if description:
         body["description"] = description
+
+    send_updates = "none"
     if attendees:
         body["attendees"] = [{"email": email} for email in attendees]
+        send_updates = "all"
 
-    insert_kwargs = {"calendarId": calendar_id, "body": body}
-    if attendees:
-        insert_kwargs["sendUpdates"] = "all"
-    event = service.events().insert(**insert_kwargs).execute()
-    return _event_to_dict(event)
+    event = service.events().insert(
+        calendarId=calendar_id, body=body, sendUpdates=send_updates
+    ).execute()
+    result = _event_to_dict(event)
+    result["invite_status"] = "sent" if attendees else "no_attendees"
+    return result
 
 
 def update_event(calendar_id: str, event_id: str, **updates) -> dict:
@@ -218,6 +278,44 @@ def find_free_slots(
         })
 
     return free
+
+
+def check_conflicts(
+    owner_cal_id: str,
+    bot_cal_id: str,
+    start: datetime,
+    end: datetime,
+) -> list[dict]:
+    """Check if a time range conflicts with existing events on either calendar.
+
+    Returns list of conflicting events (empty if time is free).
+    """
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+
+    conflicts = []
+    for cal_id in (owner_cal_id, bot_cal_id):
+        events = list_events(cal_id, start, end, max_results=50)
+        for e in events:
+            ev_start = e.get("start", "")
+            ev_end = e.get("end", "")
+            if not ev_start or not ev_end:
+                continue
+            try:
+                es = datetime.fromisoformat(ev_start)
+                ee = datetime.fromisoformat(ev_end)
+                if es.tzinfo is None:
+                    es = es.replace(tzinfo=timezone.utc)
+                if ee.tzinfo is None:
+                    ee = ee.replace(tzinfo=timezone.utc)
+                if es < end and ee > start:
+                    conflicts.append(e)
+            except (ValueError, TypeError):
+                continue
+
+    return conflicts
 
 
 def _dt_to_gcal(dt: datetime) -> dict:

@@ -40,7 +40,12 @@ async def spawn_sub_agent(
 # Task
 {task}
 
-Complete the task. Be thorough but concise in your output."""
+# Response Guidelines
+- Be concise and conversational, like a helpful human assistant
+- Lead with the result — what happened, what was done
+- NEVER mention error codes, CLI flags, API names, file paths, or stack traces
+- If something partially failed, explain what worked and what didn't in plain language
+- Use short sentences. No filler."""
 
     # Strip CLAUDECODE env var so the child doesn't think it's nested
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}

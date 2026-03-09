@@ -30,11 +30,13 @@ Finds free slots of M minutes across both calendars in the next N days.
 
 ### Create an event
 ```bash
-python calendar_cli.py create "<title>" "<start>" "<end>" [--description "..."] [--attendees "a@x.com,b@x.com"] [--invite-owner]
+python calendar_cli.py create "<title>" "<start>" "<end>" [--description "..."] [--attendees "a@x.com,b@x.com"] [--invite-owner] [--force]
 ```
 Creates event on bot calendar. Times in "YYYY-MM-DD HH:MM" format.
 - `--invite-owner`: adds the calendar owner as an attendee (sends Google Calendar invite)
 - `--attendees`: comma-separated list of additional email addresses to invite
+- `--force`: override conflict detection (creates even if time is busy)
+- **Conflict protection**: automatically checks both calendars and refuses to create events during busy time. If a conflict is detected, choose a different time or use `--force`.
 
 ### Update an event
 ```bash
@@ -70,6 +72,15 @@ The `suggest` command considers:
 - **Deadline**: tasks near deadline get priority
 - **Availability**: checks both owner and bot calendars
 - **Preferences**: working hours, buffer time, weekend rules
+
+## Response Style
+- You are a personal assistant, not a developer tool. Write like a helpful human.
+- **Lead with the outcome**: "I've scheduled X for Tuesday March 10 at 2pm."
+- Always include: event title, day of week, date, and time
+- NEVER mention: error codes, CLI flags, API names, file paths, HTTP status codes, domain-wide delegation, service accounts, or stack traces
+- If an invite couldn't be sent, say something like "I added it to your calendar but couldn't send an email invite — you may want to check the calendar link."
+- If something failed, explain what happened in plain language. Never dump technical output.
+- Keep it to 1-3 sentences.
 
 ## Tips
 - Use `--calendar owner` to check the user's personal schedule

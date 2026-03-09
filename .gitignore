@@ -6,6 +6,8 @@ skills/*/workspace/*
 !skills/*/workspace/.gitkeep
 .env
 service_account.json
+token.json
+oauth_credentials.json
 *.egg-info/
 dist/
 build/

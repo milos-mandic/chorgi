@@ -75,7 +75,7 @@ chorgi_v1/
 └── .personal/                    # User config (gitignored, created by setup.py or /setup)
     ├── identity.md
     ├── context.md
-    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, OPENAI_API_KEY, WEBHOOK_SECRET, WEBHOOK_PORT, FATHOM_WEBHOOK_SECRET, GMAIL_ADDRESS, GMAIL_APP_PASSWORD
+    ├── secrets.env               # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, OPENAI_API_KEY, WEBHOOK_SECRET, WEBHOOK_PORT, FATHOM_WEBHOOK_SECRET, GMAIL_ADDRESS, GMAIL_APP_PASSWORD, GOOGLE_OAUTH_CREDENTIALS, CALENDAR_OWNER_ID, CALENDAR_BOT_ID
     ├── costs.log                 # Append-only cost tracking
     └── memory/
         ├── long_term.md
@@ -379,12 +379,14 @@ Required env vars: `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (Gmail App Password, 16
 
 The `calendar` skill manages Google Calendar events and provides smart scheduling. Architecture:
 
-- **`calendar_client.py`** — Google Calendar API wrapper using service account auth: list_events, create_event, update_event, delete_event, find_free_slots
+- **`calendar_client.py`** — Google Calendar API wrapper using OAuth2 user credentials: list_events, create_event, update_event, delete_event, find_free_slots, check_conflicts
 - **`calendar_cli.py`** — CLI wrapper the sub-agent calls via Bash: `list`, `free`, `create`, `update`, `delete`, `suggest`
 - **`scheduler.py`** — Smart scheduling engine that scores time slots based on task type, importance, deadlines, and user preferences
 - **`preferences.md`** — Editable user scheduling preferences (working hours, task type → time-of-day mapping, defaults)
 - **Two calendars**: read-only access to user's private calendar (availability), full access to chorgibot@gmail.com calendar (event creation)
-- **Auth**: Google service account with delegated calendar access
+- **Auth**: OAuth2 user credentials (one-time browser auth, refresh token stored in `token.json`)
+- **Conflict protection**: `create` command checks both calendars and refuses to schedule on busy time (override with `--force`)
 
-Required env vars: `GOOGLE_SERVICE_ACCOUNT_FILE` (path to service account JSON key), `CALENDAR_OWNER_ID` (user's calendar ID), `CALENDAR_BOT_ID` (chorgibot@gmail.com).
-Dependencies: `google-auth`, `google-api-python-client`.
+Required env vars: `CALENDAR_OWNER_ID` (user's calendar ID), `CALENDAR_BOT_ID` (chorgibot@gmail.com).
+Required files: `oauth_credentials.json` (OAuth client ID from GCP console), `token.json` (auto-created on first auth).
+Dependencies: `google-auth`, `google-auth-oauthlib`, `google-api-python-client`.
