@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,33 @@ async def spawn_sub_agent(
         "claude",
         "--print",
         "--output-format", "json",
-        "--allowedTools", ",".join(skill_config["tools"]),
-        "--max-turns", str(skill_config.get("max_turns", 10)),
+        "--model", skill_config.get("model", "sonnet"),
+        "--permission-mode", "bypassPermissions",
+        "--allow-dangerously-skip-permissions",
     ]
+
+    # MCP server config — provides typed tools instead of generic Bash access
+    mcp_server = skill_config.get("mcp_server")
+    if mcp_server:
+        abs_args = []
+        for a in mcp_server.get("args", []):
+            candidate = Path(skill_dir) / a
+            abs_args.append(str(candidate) if candidate.exists() else a)
+        mcp_config = json.dumps({"mcpServers": {
+            skill_name: {
+                "type": "stdio",
+                "command": mcp_server["command"],
+                "args": abs_args,
+            }
+        }})
+        cmd.extend(["--mcp-config", mcp_config])
+
+    # Only add --allowedTools if there are non-MCP tools to allow
+    tools = skill_config.get("tools", [])
+    if tools:
+        cmd.extend(["--allowedTools", ",".join(tools)])
+
+    cmd.extend(["--max-turns", str(skill_config.get("max_turns", 10))])
 
     prompt = f"""# User Context
 {context}
@@ -47,8 +72,10 @@ async def spawn_sub_agent(
 - If something partially failed, explain what worked and what didn't in plain language
 - Use short sentences. No filler."""
 
-    # Strip CLAUDECODE env var so the child doesn't think it's nested
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    # Strip CLAUDECODE env var so the child doesn't think it's nested.
+    # Strip ANTHROPIC_API_KEY so Claude Code uses OAuth instead of billing
+    # against the API key (which would charge per-token for Opus).
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "ANTHROPIC_API_KEY")}
 
     logger.info(f"Spawning sub-agent for skill '{skill_name}': {task[:100]}")
     start = time.monotonic()

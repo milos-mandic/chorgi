@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 PERSONAL_DIR = Path(__file__).parent.parent / ".personal"
 SCHEDULES_DIR = Path(__file__).parent.parent / "schedules"
-MAX_CONCURRENT = 2
+MAX_CONCURRENT = 4
 MAX_HISTORY = 20
 
 
@@ -97,45 +97,78 @@ class Orchestrator:
             self._add_to_history("assistant", response)
             return {"type": "haiku", "response": response}
 
-        # Sub-agent route — return classification data for execute_sub_agent()
-        skill_name = classification.get("skill", "general")
-        summary = classification.get("summary", message)
+        # Sub-agent route — normalize single/multi-skill into tasks list
+        ack = classification.get("ack", "On it.")
+        if "skills" in classification and isinstance(classification["skills"], list):
+            tasks = [{"skill": t.get("skill", "general"), "summary": t.get("summary", message)}
+                     for t in classification["skills"]]
+        else:
+            tasks = [{"skill": classification.get("skill", "general"),
+                      "summary": classification.get("summary", message)}]
         return {
             "type": "sub_agent",
-            "skill": skill_name,
-            "summary": summary,
+            "tasks": tasks,
+            "ack": ack,
             "message": message,
         }
 
     async def execute_sub_agent(self, classification: dict) -> dict:
-        """Execute a sub-agent task from a prior classify() result."""
-        try:
-            skill_name = classification["skill"]
-            summary = classification["summary"]
+        """Execute sub-agent task(s) from a prior classify() result.
 
-            skill_config = self.skills.get(skill_name)
-            if not skill_config:
-                skill_config = self.skills.get("general")
-                if not skill_config:
-                    return {"type": "error", "response": "No skills available."}
+        Handles both single-task and multi-task classifications via the
+        normalized 'tasks' list. Backward-compatible: also accepts legacy
+        'skill'/'summary' keys.
+        """
+        return await self.execute_sub_agents(classification)
+
+    async def execute_sub_agents(self, classification: dict) -> dict:
+        """Execute one or more sub-agent tasks in parallel."""
+        try:
+            # Support both new 'tasks' list and legacy 'skill'/'summary' keys
+            tasks = classification.get("tasks")
+            if not tasks:
+                tasks = [{"skill": classification.get("skill", "general"),
+                          "summary": classification.get("summary", classification.get("message", ""))}]
 
             full_context = self.memory.get_full_context()
-            result = await self._spawn_with_limit(skill_config, summary, full_context, self.send_to_user)
+            responses = []
 
-            elapsed = result.get("elapsed_s")
-            self._log_cost("sub_agent", skill=skill_name, elapsed_s=elapsed)
+            async def _run_one(task_info):
+                skill_name = task_info["skill"]
+                summary = task_info["summary"]
+                skill_config = self.skills.get(skill_name) or self.skills.get("general")
+                if not skill_config:
+                    return skill_name, "No skills available.", True
+                result = await self._spawn_with_limit(skill_config, summary, full_context, self.send_to_user)
+                elapsed = result.get("elapsed_s")
+                self._log_cost("sub_agent", skill=skill_name, elapsed_s=elapsed)
+                if result.get("error"):
+                    return skill_name, f"Error: {result['message']}", True
+                return skill_name, result.get("text", "Done, but no output was returned."), False
 
-            if result.get("error"):
-                response_text = f"Error: {result['message']}"
+            results = await asyncio.gather(
+                *[_run_one(t) for t in tasks],
+                return_exceptions=True,
+            )
+
+            for i, res in enumerate(results):
+                if isinstance(res, Exception):
+                    skill_name = tasks[i]["skill"]
+                    responses.append(f"[{skill_name}] Error: {res}")
+                    logger.error(f"Sub-agent {skill_name} raised exception: {res}", exc_info=res)
+                else:
+                    skill_name, text, _is_error = res
+                    responses.append(text)
+                    preview = text[:200]
+                    self.memory.append_short_term(f"Task: {tasks[i]['summary']} → Result: {preview}")
+
+            if len(responses) == 1:
+                combined = responses[0]
             else:
-                response_text = result.get("text", "Done, but no output was returned.")
+                combined = "\n\n---\n\n".join(responses)
 
-            self._add_to_history("assistant", response_text)
-
-            result_preview = response_text[:200]
-            self.memory.append_short_term(f"Task: {summary} → Result: {result_preview}")
-
-            return {"type": "sub_agent", "response": response_text, "skill": skill_name}
+            self._add_to_history("assistant", combined)
+            return {"type": "sub_agent", "response": combined}
         except Exception as e:
             logger.error(f"Sub-agent execution failed: {e}", exc_info=True)
             return {"type": "error", "response": f"Sub-agent error: {e}"}

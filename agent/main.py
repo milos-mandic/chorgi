@@ -170,8 +170,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
 
         # Sub-agent route: ack immediately, then do the work
-        await update.message.reply_text("On it.")
-        result = await orchestrator.execute_sub_agent(classification)
+        ack = classification.get("ack", "On it.")
+        await update.message.reply_text(ack)
+        result = await orchestrator.execute_sub_agents(classification)
         await _send_response(update, result["response"])
     except Exception:
         logger.error("Unhandled error in handle_message", exc_info=True)
@@ -220,8 +221,9 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif classification["type"] == "haiku":
             response_text = classification["response"]
         else:
-            await update.message.reply_text("On it.")
-            result = await orchestrator.execute_sub_agent(classification)
+            ack = classification.get("ack", "On it.")
+            await update.message.reply_text(ack)
+            result = await orchestrator.execute_sub_agents(classification)
             response_text = result["response"]
 
         # Try to generate and send voice response

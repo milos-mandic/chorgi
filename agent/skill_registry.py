@@ -56,6 +56,7 @@ anything you can answer well from your training data alone.
 
 Route "sub_agent": anything requiring tool use, current information, file ops,
 multi-step tasks, research, code, analysis, or real-world actions.
+If a task requires MULTIPLE skills, list them all — they run in parallel.
 
 Route "schedule": the user wants to create a RECURRING or REPEATING task
 (e.g., "every morning", "daily", "weekly", "every 2 hours"). One-time tasks,
@@ -69,8 +70,14 @@ Respond ONLY with JSON. Examples by route:
 haiku:
 {{"route": "haiku", "response": "<your reply to the user>"}}
 
-sub_agent:
-{{"route": "sub_agent", "skill": "<skill_name>", "summary": "<one-line task>"}}
+sub_agent (single skill):
+{{"route": "sub_agent", "skill": "<skill_name>", "summary": "<one-line task>", "ack": "<brief, friendly acknowledgment of what you're about to do>"}}
+
+sub_agent (multiple skills needed):
+{{"route": "sub_agent", "skills": [{{"skill": "<skill_name>", "summary": "<task for this skill>"}}, ...], "ack": "<brief, friendly acknowledgment>"}}
+
+The "ack" field is shown to the user immediately while the task runs.
+Make it conversational and specific, e.g. "Checking your calendar and drafting that email now" not just "On it."
 
 schedule:
 {{"route": "schedule", "schedule": {{
