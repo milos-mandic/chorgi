@@ -30,7 +30,10 @@ MAX_CRASHES=3
 
 while true; do
     echo "$(date) Starting chorgi_v1 bot..." >> "$LOG"
-    python3 "$SCRIPT_DIR/agent/main.py" 2>&1 | tee -a "$LOG"
+    # Use venv Python if available, else system python3
+    PYTHON="$SCRIPT_DIR/.venv/bin/python3"
+    [ -x "$PYTHON" ] || PYTHON="python3"
+    "$PYTHON" "$SCRIPT_DIR/agent/main.py" 2>&1 | tee -a "$LOG"
     EXIT_CODE=$?
     NOW=$(date +%s)
 

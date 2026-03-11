@@ -334,6 +334,11 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     logger.info("Bot starting... Press Ctrl+C to stop.")
+    # Python 3.12+ requires an explicit event loop before run_polling()
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
     app.run_polling()
 
 
