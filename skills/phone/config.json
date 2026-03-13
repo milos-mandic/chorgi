@@ -1,7 +1,0 @@
-{
-  "name": "phone",
-  "description": "Device control and phone interaction. Handles flashlight, vibrate, brightness, volume, toast, TTS, SMS, clipboard, battery status, location, WiFi, sensors, camera, audio recording, and notifications.",
-  "tools": ["Bash", "Read", "Write"],
-  "max_turns": 10,
-  "timeout_seconds": 180
-}

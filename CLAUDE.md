@@ -43,10 +43,6 @@ chorgi_v1/
 │   │   ├── CLAUDE.md             # Summarization instructions (2-4 bullets)
 │   │   ├── config.json           # tools: Read,Bash,Write — timeout: 60s
 │   │   └── workspace/            # Saved transcripts (YYYY-MM-DD_title.txt)
-│   ├── phone/                    # Device control via termux-api
-│   │   ├── CLAUDE.md             # Termux command reference
-│   │   ├── config.json           # tools: Bash,Read,Write — timeout: 120s
-│   │   └── workspace/            # Photos, recordings, scratch files
 │   ├── email/                    # Email via Gmail IMAP/SMTP
 │   │   ├── CLAUDE.md             # CLI command reference
 │   │   ├── config.json           # tools: Bash,Read,Write — timeout: 90s
@@ -107,7 +103,7 @@ Single Haiku call that classifies intent and optionally responds inline.
 - Passes dynamic context + task via stdin; Claude Code reads skill's `CLAUDE.md` automatically from `--cwd`
 - Returns `{"text": ..., "elapsed_s": ...}` on success, `{"error": True, "message": ..., "elapsed_s": ...}` on failure
 - Handles timeout (kills process), non-JSON output (returns raw text), and various JSON output shapes
-- **Termux fixes:** Ensures `/tmp` exists (Claude Code sandbox requirement) and strips the `CLAUDECODE` env var to prevent "nested session" errors when spawning sub-agents
+- Strips `CLAUDECODE` env var to prevent "nested session" errors and `ANTHROPIC_API_KEY` to force OAuth
 
 ### `agent/memory.py`
 - `Memory(personal_dir)` — manages all `.personal/` file I/O
@@ -313,7 +309,7 @@ python agent/main.py
 nohup ~/projects/chorgi_v1/watchdog.sh &
 ```
 
-The watchdog manages auto-restart (5s delay), crash loop detection (3 exits in 60s → `git checkout . && git clean -fd`), cloudflared tunnel, and `termux-wake-lock`. Logs to `~/.chorgi_v1_watchdog.log`.
+The watchdog manages auto-restart (5s delay), crash loop detection (3 exits in 60s → `git checkout . && git clean -fd`), and cloudflared tunnel. Logs to `~/.chorgi_v1_watchdog.log`.
 
 Environment variables (`ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`) override `.personal/secrets.env` values.
 
@@ -334,31 +330,6 @@ A threaded HTTP server (`agent/webhook.py`) receives external webhooks and trigg
 4. Summary sent to user via Telegram
 
 Required env vars: `WEBHOOK_SECRET`, `FATHOM_WEBHOOK_SECRET`. Optional: `WEBHOOK_PORT`.
-
----
-
-## Termux / Android Notes
-
-This bot runs on Android via Termux. Key platform considerations:
-
-- **`/tmp` directory:** Claude Code's sandbox requires `/tmp` to exist. Termux doesn't provide one natively, but the interactive shell alias (`proot -b $PREFIX/tmp:/tmp claude`) creates a real `/tmp` dir on `/data` that persists. The spawner calls `os.makedirs("/tmp", exist_ok=True)` to ensure it exists for sub-agents.
-- **No `proot` for sub-agents:** Using `proot` to wrap sub-agent calls adds massive CPU overhead (~2x slower). Since `/tmp` persists as a real directory, sub-agents run `claude` directly without `proot`.
-- **`CLAUDECODE` env var:** Claude Code sets this in its environment to detect nested sessions. The spawner strips it so sub-agents don't refuse to start. This is safe because sub-agents are independent processes, not truly nested.
-- **`asyncio.create_subprocess_exec` bypasses shell aliases:** The bot spawns sub-agents via `asyncio.create_subprocess_exec`, which doesn't read `.zshrc` aliases. All Termux workarounds must be applied in `spawner.py` directly.
-
----
-
-## Phone Skill
-
-The `phone` skill enables device control via `termux-api` commands. Capabilities:
-
-- **Hardware control:** Flashlight, vibration, brightness, volume
-- **Communication:** Send/read SMS, text-to-speech, clipboard
-- **Sensors:** Battery status, WiFi info, GPS location, barometer, light, proximity, temperature
-- **Media:** Camera photos (front/back), microphone recording
-- **Notifications:** System notification list, toast messages
-
-Requires the `termux-api` package and the Termux:API Android app to be installed.
 
 ---
 

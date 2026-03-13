@@ -7,12 +7,6 @@ LOG="$HOME/.chorgi_v1_watchdog.log"
 
 echo "$(date) Watchdog started" >> "$LOG"
 
-# Ensure $PREFIX/tmp exists (Termux clears /tmp between sessions)
-mkdir -p "${PREFIX:-/data/data/com.termux/files/usr}/tmp"
-
-# Keep the device awake
-command -v termux-wake-lock >/dev/null && termux-wake-lock
-
 # Ensure services are running (called at startup and after each bot exit)
 ensure_services() {
     if ! pgrep -f "cloudflared" > /dev/null; then

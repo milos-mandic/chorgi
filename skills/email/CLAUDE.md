@@ -5,7 +5,7 @@ Run commands via Bash — all email operations go through `email_cli.py`.
 
 ## Rules
 - Run commands via Bash — do not import Python modules directly
-- All CLI commands are run from the skill directory: `cd /data/data/com.termux/files/home/projects/chorgi_v1/skills/email`
+- All CLI commands are run from the skill directory (working directory is already set)
 - Report results concisely — lead with the answer
 - You're running non-interactively; don't ask for clarification
 - When asked to send an email, draft it first unless the user explicitly says "send"

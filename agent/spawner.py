@@ -23,10 +23,6 @@ async def spawn_sub_agent(
     skill_dir = skill_config["dir"]
     skill_name = skill_config.get("name", "unknown")
 
-    # Ensure /tmp exists for Claude Code's sandbox (Termux doesn't have one natively,
-    # but proot creates a real /tmp dir on /data that persists across processes)
-    os.makedirs("/tmp", exist_ok=True)
-
     cmd = [
         "claude",
         "--print",
