@@ -1,11 +1,7 @@
 {
   "name": "calendar",
   "description": "Calendar and task scheduling. View calendar events, create events on chorgibot calendar, find optimal time slots based on availability and preferences.",
-  "mcp_server": {
-    "command": "python",
-    "args": ["mcp_server.py"]
-  },
-  "tools": ["Read"],
+  "tools": ["Bash", "Read", "Write"],
   "max_turns": 12,
   "timeout_seconds": 300
 }
