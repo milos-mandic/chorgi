@@ -7,7 +7,7 @@ import hmac
 import json
 import logging
 import os
-import re
+import sys
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -17,7 +17,18 @@ logger = logging.getLogger(__name__)
 
 MAX_BODY_SIZE = 1024 * 1024  # 1MB
 BASE_DIR = Path(__file__).parent.parent
-FATHOM_WORKSPACE = BASE_DIR / "skills" / "fathom" / "workspace"
+
+# Lazy-loaded fathom client
+_fathom_client = None
+
+
+def _get_fathom_client():
+    global _fathom_client
+    if _fathom_client is None:
+        sys.path.insert(0, str(BASE_DIR / "skills" / "fathom"))
+        import fathom_client as fc
+        _fathom_client = fc
+    return _fathom_client
 
 
 class WebhookServer:
@@ -209,71 +220,24 @@ def _handle_fathom(headers: dict[str, str], body: bytes, server: WebhookServer) 
         logger.warning("Fathom webhook: malformed JSON payload")
         return None
 
-    title = data.get("title", "Untitled Meeting")
-    transcript = data.get("transcript")
-    if not transcript:
+    fc = _get_fathom_client()
+    parsed = fc.parse_fathom_payload(data)
+    if parsed is None:
+        title = data.get("title", "Untitled Meeting")
         logger.info("Fathom webhook: meeting '%s' received (no transcript)", title)
         return "no_transcript"
 
-    # Determine date from payload or fallback to today
-    date_str = data.get("created_at") or data.get("recording_start_time") or ""
-    if date_str:
-        date_prefix = date_str[:10]  # YYYY-MM-DD
-    else:
-        date_prefix = time.strftime("%Y-%m-%d")
-
-    # Build attendee list from transcript speakers
-    speakers = []
-    seen = set()
-    for entry in transcript:
-        name = entry.get("speaker", {}).get("display_name", "Unknown")
-        if name not in seen:
-            speakers.append(name)
-            seen.add(name)
-
-    # Format transcript lines
-    lines = [
-        f"Meeting: {title}",
-        f"Date: {date_prefix}",
-        f"Attendees: {', '.join(speakers)}",
-        "=" * 80,
-        "",
-    ]
-    for entry in transcript:
-        ts = entry.get("timestamp", "00:00:00")
-        speaker = entry.get("speaker", {}).get("display_name", "Unknown")
-        text = entry.get("text", "")
-        lines.append(f"[{ts}] {speaker}:")
-        lines.append(text)
-        lines.append("")
-
-    content = "\n".join(lines)
-
-    # Save transcript to fathom skill workspace
-    FATHOM_WORKSPACE.mkdir(parents=True, exist_ok=True)
-    safe_title = _sanitize_filename(title)
-    filename = f"{date_prefix}_{safe_title}.txt"
-    filepath = FATHOM_WORKSPACE / filename
-
-    filepath.write_text(content)
+    content = fc.format_transcript(parsed)
+    filepath = fc.save_transcript(content, parsed["date"], parsed["title"])
     logger.info("Fathom transcript saved: %s", filepath)
 
     # Trigger the fathom skill to summarize
     task = (
-        f"Summarize the meeting transcript at: {filepath}\n"
-        f"Meeting: {title}\n"
-        f"Date: {date_prefix}\n"
-        f"Attendees: {', '.join(speakers)}"
+        f"Summarize the latest meeting transcript.\n"
+        f"Meeting: {parsed['title']}\n"
+        f"Date: {parsed['date']}\n"
+        f"Attendees: {', '.join(parsed['speakers'])}"
     )
     server._trigger_skill("fathom", task)
 
     return "accepted"
-
-
-def _sanitize_filename(name: str) -> str:
-    """Convert a meeting title to a safe filename slug."""
-    name = name.lower().strip()
-    name = re.sub(r"[^\w\s-]", "", name)
-    name = re.sub(r"[\s_]+", "-", name)
-    name = name.strip("-")
-    return name[:80] or "meeting"

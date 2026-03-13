@@ -1,7 +1,7 @@
 {
   "name": "fathom",
-  "description": "Processes and summarizes Fathom meeting transcripts",
-  "tools": ["Read", "Bash", "Write"],
-  "max_turns": 5,
+  "description": "Meeting transcript archive. Summarize meetings, search past transcripts, find action items and decisions from Fathom recordings.",
+  "tools": ["Bash", "Read"],
+  "max_turns": 10,
   "timeout_seconds": 120
 }

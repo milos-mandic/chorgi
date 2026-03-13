@@ -15,13 +15,21 @@ command -v termux-wake-lock >/dev/null && termux-wake-lock
 
 # Ensure services are running (called at startup and after each bot exit)
 ensure_services() {
-    if ! pgrep -f "cloudflared tunnel" > /dev/null; then
+    if ! pgrep -f "cloudflared" > /dev/null; then
         echo "$(date) Starting cloudflared tunnel..." >> "$LOG"
-        nohup cloudflared tunnel run chorgi >> "$HOME/cloudflared.log" 2>&1 &
+        CLOUDFLARED_TOKEN=$(grep CLOUDFLARED_TOKEN "$SCRIPT_DIR/.personal/secrets.env" 2>/dev/null | cut -d= -f2-)
+        nohup /opt/homebrew/Cellar/cloudflared/2026.3.0/bin/cloudflared tunnel run --token "$CLOUDFLARED_TOKEN" >> "$HOME/cloudflared.log" 2>&1 &
     fi
 }
 
 ensure_services
+
+# Background loop to keep services alive even while bot is running
+(while true; do
+    sleep 60
+    ensure_services
+done) &
+SERVICE_MONITOR_PID=$!
 
 # Crash loop detection: track last 3 exit timestamps
 EXIT_TIMES=()
