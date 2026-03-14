@@ -1,0 +1,53 @@
+#!/bin/bash
+# Bot management helper
+# Usage: bin/bot <start|stop|restart|status|logs|tail>
+
+PLIST="$HOME/Library/LaunchAgents/com.chorgi.bot.plist"
+LABEL="com.chorgi.bot"
+LOG="$HOME/.chorgi_bot.log"
+
+cmd="${1:-status}"
+
+case "$cmd" in
+    start)
+        launchctl load "$PLIST"
+        echo "Started."
+        ;;
+    stop)
+        launchctl unload "$PLIST"
+        echo "Stopped."
+        ;;
+    restart)
+        launchctl unload "$PLIST" 2>/dev/null || true
+        sleep 1
+        launchctl load "$PLIST"
+        echo "Restarted."
+        ;;
+    status)
+        result=$(launchctl list "$LABEL" 2>/dev/null)
+        if [ -z "$result" ]; then
+            echo "com.chorgi.bot: NOT loaded"
+        else
+            pid=$(echo "$result" | grep '"PID"' | grep -oE '[0-9]+')
+            exit_status=$(echo "$result" | grep '"LastExitStatus"' | grep -oE '\-?[0-9]+')
+            if [ -n "$pid" ]; then
+                echo "com.chorgi.bot: RUNNING (PID $pid)"
+            else
+                echo "com.chorgi.bot: STOPPED (last exit: ${exit_status:-unknown})"
+            fi
+        fi
+        echo -n "cloudflared:    "
+        launchctl list com.cloudflare.cloudflared 2>/dev/null | grep -E '"PID"' | grep -oE '[0-9]+' | \
+            awk '{print "RUNNING (PID " $1 ")"}' || echo "NOT loaded (or installed as system daemon)"
+        ;;
+    logs)
+        tail -100 "$LOG"
+        ;;
+    tail)
+        tail -f "$LOG"
+        ;;
+    *)
+        echo "Usage: bin/bot <start|stop|restart|status|logs|tail>"
+        exit 1
+        ;;
+esac

@@ -66,7 +66,14 @@ chorgi_v1/
 │
 ├── schedules/                    # Schedule JSON files (gitignored except templates)
 │
-├── watchdog.sh                  # Process manager — auto-restart, crash loop rollback, cloudflared
+├── launchd/
+│   └── com.chorgi.bot.plist      # launchd Launch Agent definition (installed by setup_launchd.sh)
+│
+├── bin/
+│   ├── bot                       # Management helper: start/stop/restart/status/logs/tail
+│   └── setup_launchd.sh          # One-time install: bot launchd agent + cloudflared system daemon
+│
+├── watchdog.sh                   # Minimal exec wrapper (launchd preferred for production)
 │
 └── .personal/                    # User config (gitignored, created by setup.py or /setup)
     ├── identity.md
@@ -302,14 +309,17 @@ Sub-agents get full context (everything).
 pip install -r requirements.txt
 python setup.py
 
-# Start the bot (direct)
-python agent/main.py
+# One-time: install bot + cloudflared as launchd services (auto-start on login)
+bash bin/setup_launchd.sh
 
-# Start with watchdog (recommended for production)
-nohup ~/projects/chorgi_v1/watchdog.sh &
+# Day-to-day management
+bin/bot start|stop|restart|status|logs|tail
+
+# Direct invocation (no auto-restart)
+python agent/main.py
 ```
 
-The watchdog manages auto-restart (5s delay), crash loop detection (3 exits in 60s → `git checkout . && git clean -fd`), and cloudflared tunnel. Logs to `~/.chorgi_v1_watchdog.log`.
+The bot runs as a launchd Launch Agent (`com.chorgi.bot`) — auto-starts on login, restarts on crash with a 5s delay. cloudflared runs as a system daemon installed by `cloudflared service install`. Logs to `~/.chorgi_bot.log`.
 
 Environment variables (`ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`) override `.personal/secrets.env` values.
 

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chorgi.bot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/chorgi/projects/chorgi_bot/.venv/bin/python3</string>
+    <string>/Users/chorgi/projects/chorgi_bot/agent/main.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/chorgi/projects/chorgi_bot</string>
+
+  <!-- Auto-restart on crash -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- 5-second restart delay (prevents tight crash loops burning CPU) -->
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <!-- Start automatically on login -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Log stdout + stderr to same file -->
+  <key>StandardOutPath</key>
+  <string>/Users/chorgi/.chorgi_bot.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/chorgi/.chorgi_bot.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/chorgi</string>
+  </dict>
+</dict>
+</plist>
