@@ -1,0 +1,13 @@
+{
+  "topics": [
+    {"name": "Forward Deployed Engineers", "context": ""}
+  ],
+  "sources": [
+    "Hacker News",
+    "Reddit",
+    "TechCrunch",
+    "Bloomberg Technology",
+    "Ars Technica",
+    "The Verge"
+  ]
+}

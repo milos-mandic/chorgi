@@ -1,0 +1,7 @@
+{
+  "name": "research",
+  "description": "Daily research briefing and topic management. Searches the web for fresh news and articles on topics the user tracks. Manages topics (add/remove/list) and sources (add/remove/list). Sends morning briefing emails with ~20 links and summaries.",
+  "tools": ["Bash", "Read", "Write", "WebSearch", "WebFetch"],
+  "max_turns": 30,
+  "timeout_seconds": 600
+}
