@@ -37,8 +37,18 @@ case "$cmd" in
             fi
         fi
         echo -n "cloudflared:    "
-        launchctl list com.cloudflare.cloudflared 2>/dev/null | grep -E '"PID"' | grep -oE '[0-9]+' | \
-            awk '{print "RUNNING (PID " $1 ")"}' || echo "NOT loaded (or installed as system daemon)"
+        cf_result=$(launchctl list com.chorgi.cloudflared 2>/dev/null)
+        if [ -z "$cf_result" ]; then
+            echo "NOT loaded"
+        else
+            cf_pid=$(echo "$cf_result" | grep '"PID"' | grep -oE '[0-9]+')
+            cf_exit=$(echo "$cf_result" | grep '"LastExitStatus"' | grep -oE '\-?[0-9]+')
+            if [ -n "$cf_pid" ]; then
+                echo "RUNNING (PID $cf_pid)"
+            else
+                echo "STOPPED (last exit: ${cf_exit:-unknown})"
+            fi
+        fi
         ;;
     logs)
         tail -100 "$LOG"
