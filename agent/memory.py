@@ -98,14 +98,29 @@ class Memory:
         if not short or len(short.strip().splitlines()) < 5:
             return  # Not enough to evaluate
 
+        lt_path = self.memory_dir / "long_term.md"
+        existing_long = self._read_file(lt_path)
+
+        existing_section = ""
+        if existing_long.strip():
+            existing_section = (
+                "\n\nExisting long-term memory (DO NOT promote duplicates of these):\n"
+                f"{existing_long}"
+            )
+
         prompt = (
             "Review these short-term memory entries and identify any durable facts "
             "worth keeping permanently (e.g. user preferences, project decisions, "
-            "important outcomes). Return ONLY a JSON object with two keys:\n"
+            "important outcomes). Return ONLY a JSON object with three keys:\n"
             '- "promote": list of strings to add to long-term memory\n'
             '- "remove_lines": list of exact lines to remove from short-term\n'
+            '- "remove_long_term": list of exact lines from existing long-term memory '
+            "that are superseded by new promotions (empty if none)\n"
+            "Do NOT promote anything already covered by existing long-term memory. "
+            "If a new entry updates an existing fact, put the old line in "
+            '"remove_long_term" and the updated version in "promote".\n'
             "If nothing is worth promoting, return empty lists.\n\n"
-            f"Entries:\n{short}"
+            f"Short-term entries:\n{short}{existing_section}"
         )
 
         try:
@@ -130,9 +145,20 @@ class Memory:
 
         to_promote = data.get("promote", [])
         to_remove = set(data.get("remove_lines", []))
+        to_remove_lt = set(data.get("remove_long_term", []))
+
+        # Remove superseded long-term entries before appending new ones
+        if to_remove_lt:
+            lt_content = self._read_file(lt_path)
+            if lt_content:
+                remaining_lt = [l for l in lt_content.splitlines() if l.strip() not in to_remove_lt]
+                try:
+                    lt_path.write_text("\n".join(remaining_lt) + "\n" if remaining_lt else "")
+                    logger.info(f"Removed {len(to_remove_lt)} superseded lines from long_term.md")
+                except OSError as e:
+                    logger.warning(f"Failed to rewrite long_term.md: {e}")
 
         if to_promote:
-            lt_path = self.memory_dir / "long_term.md"
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             try:
                 with open(lt_path, "a") as f:
@@ -149,6 +175,57 @@ class Memory:
                 logger.info(f"Removed {len(to_remove)} promoted lines from short_term.md")
             except OSError as e:
                 logger.warning(f"Failed to rewrite short_term.md: {e}")
+
+    async def deduplicate_long_term(self, haiku_fn):
+        """One-time dedup: send full long_term.md to Haiku, replace with clean list."""
+        lt_path = self.memory_dir / "long_term.md"
+        content = self._read_file(lt_path)
+        if not content or len(content.strip().splitlines()) < 3:
+            return
+
+        line_count = len(content.strip().splitlines())
+        prompt = (
+            "Below is a long-term memory file that has accumulated duplicates. "
+            "Deduplicate it: merge redundant entries, keep the most complete/recent "
+            "version of each fact, and remove anything trivial or outdated.\n"
+            'Return ONLY a JSON object with one key: "keep" — a list of strings, '
+            "each a clean memory entry (no timestamps, no bullet markers).\n"
+            "Preserve ALL unique facts — do not discard anything that isn't a duplicate.\n\n"
+            f"Long-term memory:\n{content}"
+        )
+
+        try:
+            result = await haiku_fn(prompt)
+        except Exception as e:
+            logger.error(f"Dedup Haiku call failed: {e}")
+            return
+
+        try:
+            data = json.loads(result)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", result, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    logger.warning("Could not parse dedup response")
+                    return
+            else:
+                return
+
+        keep = data.get("keep", [])
+        if not keep:
+            logger.warning("Dedup returned empty keep list — skipping write")
+            return
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            with open(lt_path, "w") as f:
+                for item in keep:
+                    f.write(f"- [{ts}] {item}\n")
+            logger.info(f"Deduplicated long_term.md: {line_count} -> {len(keep)} entries")
+        except OSError as e:
+            logger.warning(f"Failed to write deduplicated long_term.md: {e}")
 
     # --- Scratch pad ---
 

@@ -45,6 +45,17 @@ class Scheduler:
 
         await memory.prune_short_term()
         await memory.promote_to_long_term(self.orchestrator.haiku_query)
+
+        # One-time dedup of long_term.md (delete .dedup_done to re-trigger)
+        dedup_flag = memory.memory_dir / ".dedup_done"
+        if not dedup_flag.exists():
+            try:
+                await memory.deduplicate_long_term(self.orchestrator.haiku_query)
+                dedup_flag.touch()
+                logger.info("One-time long_term.md dedup complete")
+            except Exception as e:
+                logger.error(f"Long-term dedup failed: {e}")
+
         await self.orchestrator.check_scratch_pad()
         await self.orchestrator.reload_skills()
         await self._check_emails()
@@ -70,7 +81,13 @@ class Scheduler:
                     await self._execute(schedule)
                     self._mark_ran(path, now)
                 except Exception as e:
-                    logger.error(f"Schedule {schedule.get('name', path.name)} failed: {e}")
+                    name = schedule.get('name', path.name)
+                    logger.error(f"Schedule {name} failed: {e}")
+                    if self.orchestrator.send_to_user:
+                        try:
+                            await self.orchestrator.send_to_user(f"⚠️ Scheduled task '{name}' failed:\n{e}")
+                        except Exception:
+                            pass
 
     def _is_due(self, schedule: dict, now: datetime) -> bool:
         trigger = schedule.get("trigger")
@@ -113,8 +130,15 @@ class Scheduler:
         else:
             result = await self.orchestrator.haiku_query(prompt)
 
+        is_error = isinstance(result, str) and result.startswith("Error:")
+        if is_error:
+            logger.warning(f"Schedule {name} returned error: {result}")
+
         if notify and self.orchestrator.send_to_user:
-            await self.orchestrator.send_to_user(f"[{name}]\n\n{result}")
+            if is_error:
+                await self.orchestrator.send_to_user(f"⚠️ Scheduled task '{name}' failed:\n{result}")
+            else:
+                await self.orchestrator.send_to_user(f"[{name}]\n\n{result}")
 
         logger.info(f"Schedule {name} completed")
 
