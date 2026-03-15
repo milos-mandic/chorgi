@@ -54,7 +54,8 @@ def load_secrets():
                  "OPENAI_API_KEY", "WEBHOOK_SECRET", "WEBHOOK_PORT",
                  "FATHOM_WEBHOOK_SECRET",
                  "GOOGLE_OAUTH_CREDENTIALS", "CALENDAR_OWNER_ID",
-                 "CALENDAR_BOT_ID"):
+                 "CALENDAR_BOT_ID",
+                 "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"):
         env_val = os.environ.get(key)
         if env_val:
             secrets[key] = env_val
@@ -302,7 +303,8 @@ def main():
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
     for key in ("WEBHOOK_SECRET", "WEBHOOK_PORT", "FATHOM_WEBHOOK_SECRET",
                  "GOOGLE_OAUTH_CREDENTIALS", "CALENDAR_OWNER_ID",
-                 "CALENDAR_BOT_ID"):
+                 "CALENDAR_BOT_ID",
+                 "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"):
         if secrets.get(key):
             os.environ[key] = secrets[key]
 

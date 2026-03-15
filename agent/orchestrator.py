@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from agent.skill_registry import discover_skills, build_router_prompt, get_skill
 from agent.haiku import classify_and_respond
 from agent.spawner import spawn_sub_agent
 from agent.memory import Memory
+from agent import bookmarks
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,10 @@ class Orchestrator:
 
         if route == "haiku":
             response = classification.get("response", "I'm not sure how to respond.")
+            # Check for URLs to bookmark
+            bookmark_note = await self._handle_bookmark_url(message)
+            if bookmark_note:
+                response = f"{response}\n\n{bookmark_note}"
             self._add_to_history("assistant", response)
             return {"type": "haiku", "response": response}
 
@@ -326,3 +332,88 @@ class Orchestrator:
             if self.send_to_user:
                 await self.send_to_user(f"Scratch pad note:\n\n{content.strip()}")
             self.memory.clear_scratch()
+
+    # --- Bookmarks ---
+
+    async def _handle_bookmark_url(self, message: str) -> str | None:
+        """Detect URLs in message, fetch metadata, summarize, store. Returns note or None."""
+        urls = bookmarks.extract_urls(message)
+        if not urls:
+            return None
+
+        parts = []
+        for url in urls:
+            meta = await asyncio.to_thread(bookmarks.fetch_page_meta, url)
+            title = meta.get("title") or url
+            description = meta.get("description", "")
+
+            # Ask Haiku for a 1-2 sentence summary
+            summary_prompt = (
+                f"Summarize this page in 1-2 sentences.\n"
+                f"Title: {title}\nDescription: {description}\nURL: {url}"
+            )
+            try:
+                summary = await self.haiku_query(summary_prompt)
+            except Exception as e:
+                logger.warning(f"Bookmark summary failed for {url}: {e}")
+                summary = description or "No summary available."
+
+            unsent_count = bookmarks.add_bookmark(url, title, summary)
+            parts.append(f"Saved! **{title}**\n{summary}")
+
+            self.memory.append_short_term(f"Bookmarked: {title} — {url}")
+
+        # Check digest threshold
+        digest_note = ""
+        unsent = bookmarks.get_unsent_bookmarks()
+        if len(unsent) >= 5:
+            digest_result = await self._send_bookmark_digest()
+            if digest_result:
+                digest_note = f"\n\n{digest_result}"
+        else:
+            digest_note = f"\n({len(unsent)}/5 until digest)"
+
+        return "\n\n".join(parts) + digest_note
+
+    async def _send_bookmark_digest(self) -> str | None:
+        """Email all unsent bookmarks as a digest. Returns status message or None."""
+        unsent = bookmarks.get_unsent_bookmarks()
+        if not unsent:
+            return None
+
+        # Build HTML email
+        items_html = []
+        for b in unsent:
+            items_html.append(
+                f'<li><a href="{b["url"]}">{b.get("title") or b["url"]}</a>'
+                f'<br><em>{b.get("summary", "")}</em></li>'
+            )
+        html_body = (
+            f"<h2>Reading Digest — {len(unsent)} links</h2>"
+            f"<ul>{''.join(items_html)}</ul>"
+            f"<p><small>Sent by Chorgi Bot</small></p>"
+        )
+
+        try:
+            import sys
+            email_dir = str(Path(__file__).parent.parent / "skills" / "email")
+            if email_dir not in sys.path:
+                sys.path.insert(0, email_dir)
+            import email_client
+
+            gmail_addr = os.environ.get("GMAIL_ADDRESS", "")
+            await asyncio.to_thread(
+                email_client.send_html_email,
+                gmail_addr,
+                f"Reading Digest — {len(unsent)} links",
+                html_body,
+            )
+            bookmarks.mark_emailed([b["url"] for b in unsent])
+            self._log_cost("bookmark_digest", count=len(unsent))
+            msg = f"Sent your reading digest ({len(unsent)} links) to email!"
+            if self.send_to_user:
+                await self.send_to_user(msg)
+            return msg
+        except Exception as e:
+            logger.error(f"Failed to send bookmark digest: {e}")
+            return f"Failed to send digest: {e}"

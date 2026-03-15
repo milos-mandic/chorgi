@@ -59,6 +59,7 @@ class Scheduler:
         await self.orchestrator.check_scratch_pad()
         await self.orchestrator.reload_skills()
         await self._check_emails()
+        await self._check_bookmark_digest()
 
         logger.info("Heartbeat complete")
 
@@ -159,6 +160,16 @@ class Scheduler:
             logger.info(f"Notified user of {len(new)} new email(s)")
         except Exception as e:
             logger.debug(f"Email check skipped: {e}")
+
+    async def _check_bookmark_digest(self):
+        """Safety-net: send bookmark digest if 5+ unsent bookmarks accumulated."""
+        try:
+            from agent.bookmarks import get_unsent_bookmarks
+            unsent = get_unsent_bookmarks()
+            if len(unsent) >= 5:
+                await self.orchestrator._send_bookmark_digest()
+        except Exception as e:
+            logger.debug(f"Bookmark digest check skipped: {e}")
 
     def _mark_ran(self, schedule_path: Path, now: datetime):
         """Update last_run in the schedule JSON file."""
