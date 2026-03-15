@@ -4,10 +4,14 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Resolve claude binary at import time so launchd's minimal PATH doesn't matter
+CLAUDE_BIN = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 
 async def spawn_sub_agent(
@@ -24,7 +28,7 @@ async def spawn_sub_agent(
     skill_name = skill_config.get("name", "unknown")
 
     cmd = [
-        "claude",
+        CLAUDE_BIN,
         "--print",
         "--output-format", "json",
         "--model", skill_config.get("model", "sonnet"),
