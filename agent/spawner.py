@@ -96,8 +96,14 @@ async def spawn_sub_agent(
         elapsed = time.monotonic() - start
 
         if process.returncode != 0:
-            logger.error(f"Sub-agent '{skill_name}' failed (rc={process.returncode}) in {elapsed:.1f}s")
-            return {"error": True, "message": stderr.decode().strip(), "elapsed_s": round(elapsed, 1)}
+            err_msg = stderr.decode().strip()
+            out_msg = stdout.decode().strip()
+            detail = err_msg or out_msg or f"Sub-agent exited with code {process.returncode}"
+            logger.error(
+                f"Sub-agent '{skill_name}' failed (rc={process.returncode}) in {elapsed:.1f}s. "
+                f"stderr={err_msg!r} stdout={out_msg[:500]!r}"
+            )
+            return {"error": True, "message": detail, "elapsed_s": round(elapsed, 1)}
 
         result = json.loads(stdout.decode())
         # Extract the text result from Claude's JSON output

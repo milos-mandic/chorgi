@@ -46,6 +46,9 @@ bin/bot start|stop|restart|status|logs|tail
 
 Always stop the bot before making changes, restart after. The bot runs as a launchd Launch Agent.
 
+**CLAUDE.md edits:** This file gets auto-reverted mid-session. Always chain write+stage in one bash command:
+`cat > CLAUDE.md << 'EOF' ... EOF && git add CLAUDE.md`
+
 ## Env Vars (`.personal/secrets.env`)
 
 `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`, `OPENAI_API_KEY`, `WEBHOOK_SECRET`, `WEBHOOK_PORT`, `FATHOM_WEBHOOK_SECRET`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `CALENDAR_OWNER_ID`, `CALENDAR_BOT_ID`

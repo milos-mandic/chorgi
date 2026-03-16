@@ -1,5 +1,6 @@
 """Memory management — context assembly, read/write, pruning, promotion."""
 
+import hashlib
 import json
 import logging
 import re
@@ -16,6 +17,7 @@ class Memory:
     def __init__(self, personal_dir: Path):
         self.personal_dir = personal_dir
         self.memory_dir = personal_dir / "memory"
+        self._last_promote_hash: str | None = None
 
     def _read_file(self, path: Path) -> str:
         try:
@@ -98,6 +100,10 @@ class Memory:
         if not short or len(short.strip().splitlines()) < 5:
             return  # Not enough to evaluate
 
+        content_hash = hashlib.md5(short.encode()).hexdigest()
+        if content_hash == self._last_promote_hash:
+            return  # Nothing changed since last promotion check
+
         lt_path = self.memory_dir / "long_term.md"
         existing_long = self._read_file(lt_path)
 
@@ -128,6 +134,8 @@ class Memory:
         except Exception as e:
             logger.error(f"Promotion Haiku call failed: {e}")
             return
+
+        self._last_promote_hash = content_hash
 
         # Parse response
         try:

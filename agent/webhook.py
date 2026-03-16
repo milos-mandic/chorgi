@@ -31,6 +31,10 @@ def _get_fathom_client():
     return _fathom_client
 
 
+class _ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
 class WebhookServer:
     """Lightweight HTTP server for receiving webhooks on a background thread."""
 
@@ -108,7 +112,7 @@ class WebhookServer:
                     self.send_response(404)
                     self.end_headers()
 
-        self._server = HTTPServer(("0.0.0.0", port), Handler)
+        self._server = _ReusableHTTPServer(("0.0.0.0", port), Handler)
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             daemon=True,
