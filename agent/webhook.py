@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -112,7 +113,26 @@ class WebhookServer:
                     self.send_response(404)
                     self.end_headers()
 
-        self._server = _ReusableHTTPServer(("0.0.0.0", port), Handler)
+        # Kill any stale process holding the port (e.g. previous bot instance)
+        result = subprocess.run(["/usr/sbin/lsof", "-ti", f":{port}"], capture_output=True, text=True)
+        if result.stdout.strip():
+            my_pid = str(os.getpid())
+            for pid in result.stdout.strip().split("\n"):
+                pid = pid.strip()
+                if pid and pid != my_pid:
+                    logger.warning("Killing stale process %s on port %d", pid, port)
+                    try:
+                        os.kill(int(pid), 9)
+                    except (ProcessLookupError, ValueError):
+                        pass
+            time.sleep(0.5)
+
+        try:
+            self._server = _ReusableHTTPServer(("0.0.0.0", port), Handler)
+        except OSError as e:
+            logger.error("Webhook server failed to bind port %d: %s (continuing without webhooks)", port, e)
+            return
+
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             daemon=True,
