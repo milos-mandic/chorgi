@@ -177,7 +177,9 @@ class Memory:
                 logger.warning(f"Failed to write long_term.md: {e}")
 
         if to_remove:
-            remaining = [l for l in short.splitlines() if l.strip() not in to_remove]
+            # Re-read to avoid losing entries appended during the Haiku await
+            current_short = self._read_file(path)
+            remaining = [l for l in current_short.splitlines() if l.strip() not in to_remove]
             try:
                 path.write_text("\n".join(remaining) + "\n" if remaining else "")
                 logger.info(f"Removed {len(to_remove)} promoted lines from short_term.md")

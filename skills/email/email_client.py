@@ -177,7 +177,7 @@ def search_emails(query: str, max_results: int = 10) -> list[dict]:
             pass
 
 
-def read_email(uid: str) -> dict:
+def read_email(uid: str, max_chars: int = 4000) -> dict:
     """Read a full email by UID."""
     conn = _connect_imap()
     try:
@@ -186,7 +186,15 @@ def read_email(uid: str) -> dict:
         if msg_data[0] is None:
             return {"error": f"Email UID {uid} not found"}
         msg = email.message_from_bytes(msg_data[0][1])
-        return _msg_to_dict(msg, uid, preview=False)
+        body = _extract_body(msg, max_chars=max_chars)
+        result = {
+            "uid": uid,
+            "from": _decode_header(msg.get("From", "")),
+            "subject": _decode_header(msg.get("Subject", "(no subject)")),
+            "date": msg.get("Date", ""),
+            "body": body,
+        }
+        return result
     finally:
         try:
             conn.close()

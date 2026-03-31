@@ -44,8 +44,8 @@ When the task says to generate a briefing:
 2. For each topic: use `WebSearch` with source-biased, date-biased queries
    - Run 2 searches per topic with different angles
    - Include source names in queries (e.g., "Forward Deployed Engineers site:news.ycombinator.com OR site:reddit.com 2026")
-   - Include date terms like "2026" or "this week" to get fresh results
-   - **Prioritize the most recent articles** — prefer content from the last 7 days
+   - Include date terms like "today" or "past 24 hours" to get fresh results
+   - **Only include articles from the last 24 hours** — older articles will be filtered out by the CLI
 3. Use `WebFetch` on the 1-2 most promising URLs per topic to get better summaries and extract the publication date
 4. Write `workspace/briefing_draft.json` with this structure:
    ```json
@@ -72,7 +72,8 @@ When the task says to generate a briefing:
 
 ## Guidelines
 - Target ~4 articles per topic (more is fine if there's good content)
-- Prioritize newer articles — content from the last few days over older pieces
+- **Only include articles published in the last 24 hours** — if a topic has no fresh articles, omit it entirely
+- If no topics have fresh articles, still write an empty `briefing_draft.json` (`{"topics": []}`) and call `send-briefing` — the CLI will skip the email gracefully
 - Prioritize breadth across sources over depth on one source
 - Skip obviously paywalled content
 - Be efficient with turns — batch searches where possible

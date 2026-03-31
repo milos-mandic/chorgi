@@ -1,0 +1,7 @@
+{
+  "name": "tasks",
+  "description": "Personal task list / to-do items. Add tasks like 'I need to do X', 'remind me to Y', 'add task: Z'. NOT for calendar events with specific dates/times — use this for things the user needs to get done that will be auto-scheduled into free time later.",
+  "tools": ["Bash", "Read", "Write"],
+  "max_turns": 8,
+  "timeout_seconds": 120
+}

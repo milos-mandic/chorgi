@@ -1,6 +1,6 @@
 {
   "name": "linkedin",
-  "description": "LinkedIn content planning and post drafting. Weekly content calendars with varied formats, ideas backlog management, post history tracking. 5 posts per week targeting FDE Hub audience.",
+  "description": "LinkedIn content planning, post drafting, and FDE post monitoring. Weekly content calendars with varied formats, ideas backlog management, post history tracking. Hourly monitoring for LinkedIn posts about FDE/DevRel. 5 posts per week targeting FDE Hub audience.",
   "tools": ["Bash", "Read", "Write", "WebSearch", "WebFetch"],
   "max_turns": 25,
   "timeout_seconds": 300

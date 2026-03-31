@@ -15,6 +15,7 @@ IDEAS_FILE = WORKSPACE / "ideas_backlog.json"
 HISTORY_FILE = WORKSPACE / "post_history.json"
 DRAFTS_DIR = WORKSPACE / "drafts"
 
+SEEN_POSTS_FILE = WORKSPACE / "seen_posts.json"
 FORMATS = ["thought_leadership", "practical_tip", "story", "question", "hot_take", "curated"]
 
 
@@ -207,6 +208,46 @@ def cmd_history_formats(args):
         print(f"  {'unknown':20s}  {unknown:3d}")
 
 
+# --- Monitor commands ---
+
+def cmd_monitor_seen(args):
+    data = _load_json(SEEN_POSTS_FILE, {"posts": []})
+    if not data["posts"]:
+        print("No seen posts tracked yet.")
+        return
+    print(f"Seen posts ({len(data['posts'])}):")
+    for p in data["posts"]:
+        author = p.get("author", "?")
+        title = p.get("title", "?")
+        found = p.get("found_at", "?")
+        print(f"  [{found}] {author} — {title}")
+        print(f"    {p['url']}")
+
+
+def cmd_monitor_mark(args):
+    data = _load_json(SEEN_POSTS_FILE, {"posts": []})
+    new_posts = json.loads(args.json_data)
+    existing_urls = {p["url"] for p in data["posts"]}
+    added = 0
+    now = datetime.now().isoformat()
+    for post in new_posts:
+        if post["url"] not in existing_urls:
+            post["found_at"] = now
+            data["posts"].append(post)
+            existing_urls.add(post["url"])
+            added += 1
+    # Auto-prune entries older than 7 days
+    cutoff = (datetime.now() - timedelta(days=7)).isoformat()
+    data["posts"] = [p for p in data["posts"] if p.get("found_at", "") >= cutoff]
+    _save_json(SEEN_POSTS_FILE, data)
+    print(f"Marked {added} new post(s) as seen. Total tracked: {len(data['posts'])}")
+
+
+def cmd_monitor_clear(args):
+    _save_json(SEEN_POSTS_FILE, {"posts": []})
+    print("Cleared all seen posts.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="LinkedIn content CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -265,6 +306,20 @@ def main():
 
     p = hist_sub.add_parser("formats", help="Format distribution")
     p.set_defaults(func=cmd_history_formats)
+
+    # monitor
+    mon_parser = sub.add_parser("monitor", help="FDE post monitoring")
+    mon_sub = mon_parser.add_subparsers(dest="action", required=True)
+
+    p = mon_sub.add_parser("seen", help="List seen post URLs")
+    p.set_defaults(func=cmd_monitor_seen)
+
+    p = mon_sub.add_parser("mark", help="Mark posts as seen")
+    p.add_argument("json_data", help="JSON array of posts: [{url, title, author}]")
+    p.set_defaults(func=cmd_monitor_mark)
+
+    p = mon_sub.add_parser("clear", help="Clear all seen posts")
+    p.set_defaults(func=cmd_monitor_clear)
 
     args = parser.parse_args()
     args.func(args)

@@ -79,6 +79,10 @@ sub_agent (multiple skills needed):
 The "ack" field is shown to the user immediately while the task runs.
 Make it conversational and specific, e.g. "Checking your calendar and drafting that email now" not just "On it."
 
+FORMATTING: Your responses go to Telegram which does NOT render markdown.
+Never use markdown formatting (no **, *, `, #, - for lists, ```, etc.).
+Use plain text with emojis for emphasis instead. Use • for bullet points.
+
 schedule:
 {{"route": "schedule", "schedule": {{
   "name": "<snake_case_slug>",

@@ -31,6 +31,11 @@ python3 linkedin_cli.py ideas use "<topic>"              # Mark idea used
 python3 linkedin_cli.py history log "<topic>" "<format>" # Log a posted piece
 python3 linkedin_cli.py history show [--weeks N]         # Recent history (default 4)
 python3 linkedin_cli.py history formats                  # Format distribution
+
+# Monitor
+python3 linkedin_cli.py monitor seen                     # List seen post URLs
+python3 linkedin_cli.py monitor mark '<json>'            # Mark posts as seen
+python3 linkedin_cli.py monitor clear                    # Clear all seen posts
 ```
 
 ## Mode 1: Weekly Calendar Generation
@@ -95,6 +100,33 @@ When the user confirms a post was published:
 2. `python3 linkedin_cli.py calendar update <date> --status posted`
 3. If the topic came from the ideas backlog: `python3 linkedin_cli.py ideas use "<topic>"`
 4. Confirm logging
+
+## Mode 5: FDE Post Monitoring
+
+When the task mentions monitoring, scanning, or finding FDE posts:
+
+1. `python3 linkedin_cli.py monitor seen` — get already-seen URLs
+2. Use `WebSearch` with multiple queries to find recent LinkedIn posts:
+   - `site:linkedin.com/posts "FDE" OR "field developer engineer"`
+   - `site:linkedin.com/posts "developer evangelist" OR "developer advocate" FDE`
+   - `site:linkedin.com/posts "FDE Hub"`
+3. For each result NOT in the seen list:
+   - Use `WebFetch` to get the post content/preview
+   - Extract: author, title/hook, URL, approximate date
+   - **Skip posts older than 24 hours** — check the visible date/timestamp on the post. If it's more than a day old, mark it as seen but do NOT include it in the report.
+4. Mark ALL found posts (new and old, including skipped old ones) as seen:
+   ```bash
+   python3 linkedin_cli.py monitor mark '[{"url": "...", "title": "...", "author": "..."}]'
+   ```
+5. If NO new posts found: respond with only whitespace (empty response) — scheduler will stay silent
+6. If new posts found, report in this format:
+   ```
+   **Author Name** — First line/hook of the post
+   https://linkedin.com/posts/...
+
+   **Another Author** — Their post hook
+   https://linkedin.com/posts/...
+   ```
 
 ## Format Types
 - `thought_leadership` — industry perspective, contrarian take

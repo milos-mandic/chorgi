@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,6 +123,7 @@ class Scheduler:
         task_type = schedule.get("type", "haiku")
         prompt = schedule.get("prompt", "")
         notify = schedule.get("notify_user", False)
+        silent_empty = schedule.get("silent_when_empty", False)
 
         logger.info(f"Executing schedule: {name}")
 
@@ -136,10 +138,14 @@ class Scheduler:
             logger.warning(f"Schedule {name} returned error: {result}")
 
         if notify and self.orchestrator.send_to_user:
-            if is_error:
-                await self.orchestrator.send_to_user(f"⚠️ Scheduled task '{name}' failed:\n{result}")
+            if silent_empty and isinstance(result, str) and not result.strip():
+                logger.info(f"Schedule {name}: empty result, skipping notification")
+            elif is_error:
+                display = schedule.get("display_name") or name.replace("_", " ").title()
+                await self.orchestrator.send_to_user(f"⚠️ {display} failed:\n{result}")
             else:
-                await self.orchestrator.send_to_user(f"[{name}]\n\n{result}")
+                display = schedule.get("display_name") or name.replace("_", " ").title()
+                await self.orchestrator.send_to_user(f"{display}\n\n{result}")
 
         logger.info(f"Schedule {name} completed")
 
@@ -147,19 +153,106 @@ class Scheduler:
         """Poll for new unseen emails and notify user via Telegram."""
         try:
             import email_client
+            from forward_parser import is_forwarded_from_milos
             new = await asyncio.to_thread(email_client.check_new_emails)
             if not new:
                 return
             for e in new:
-                sender = e.get("from", "unknown")
-                subject = e.get("subject", "(no subject)")
-                preview = e.get("body_preview", "")
-                msg = f"\U0001f4e7 New email from {sender}\nSubject: {subject}\n{preview}"
-                if self.orchestrator.send_to_user:
-                    await self.orchestrator.send_to_user(msg)
+                try:
+                    subject = e.get("subject", "")
+                    # Skip calendar RSVP notifications (Accepted/Declined/Tentative)
+                    if re.match(r"^(Accepted|Declined|Tentative):", subject):
+                        logger.debug(f"Skipping calendar RSVP email: {subject}")
+                        continue
+                    if is_forwarded_from_milos(e):
+                        await self._handle_forwarded_email(e)
+                    else:
+                        sender = e.get("from", "unknown")
+                        preview = e.get("body_preview", "")
+                        msg = f"\U0001f4e7 New email from {sender}\nSubject: {subject}\n{preview}"
+                        if self.orchestrator.send_to_user:
+                            await self.orchestrator.send_to_user(msg)
+                except Exception as email_err:
+                    logger.warning(f"Failed to process email '{e.get('subject', '?')}': {email_err}")
             logger.info(f"Notified user of {len(new)} new email(s)")
         except Exception as e:
-            logger.debug(f"Email check skipped: {e}")
+            logger.warning(f"Email check failed: {e}", exc_info=True)
+
+    async def _handle_forwarded_email(self, email_summary: dict):
+        """Process a forwarded email from Milos: parse, draft reply via sub-agent, email back."""
+        import email_client
+        from forward_parser import MILOS_EMAIL, parse_forwarded_email
+
+        uid = email_summary["uid"]
+        subject = email_summary.get("subject", "(no subject)")
+
+        try:
+            # Fetch full email body
+            full_email = await asyncio.to_thread(email_client.read_email, uid, 8000)
+            body = full_email.get("body", "")
+            if not body:
+                raise ValueError("Empty email body")
+
+            # Parse forwarded content
+            parsed = parse_forwarded_email(body)
+            if not parsed:
+                raise ValueError("Could not parse forwarded email format")
+
+            if not parsed["instructions"].strip() and not parsed["original_body"].strip():
+                raise ValueError("Empty instructions and original body")
+
+            # Build prompt for the email sub-agent
+            prompt = self._build_forward_reply_prompt(parsed)
+
+            # Spawn email sub-agent to draft and send the reply
+            logger.info(f"Drafting reply for forwarded email: {subject}")
+            result = await self.orchestrator.run_scheduled_task("email", prompt)
+
+            # Notify via Telegram
+            if self.orchestrator.send_to_user:
+                sender_name = parsed.get("original_from_name", parsed["original_from"])
+                orig_subject = parsed["original_subject"]
+                await self.orchestrator.send_to_user(
+                    f"\u270d\ufe0f Draft reply sent to your email\n"
+                    f"To: {sender_name}\n"
+                    f"Re: {orig_subject}\n\n"
+                    f"{result}"
+                )
+
+            logger.info(f"Forward-reply completed for: {subject}")
+
+        except Exception as e:
+            logger.warning(f"Forward-reply failed for '{subject}': {e}")
+            # Fall back to standard notification
+            sender = email_summary.get("from", "unknown")
+            preview = email_summary.get("body_preview", "")
+            msg = f"\U0001f4e7 New email from {sender}\nSubject: {subject}\n{preview}"
+            if self.orchestrator.send_to_user:
+                await self.orchestrator.send_to_user(msg)
+                await self.orchestrator.send_to_user(
+                    f"\u26a0\ufe0f Auto-reply drafting failed: {e}"
+                )
+
+    def _build_forward_reply_prompt(self, parsed: dict) -> str:
+        """Build the sub-agent prompt for drafting a forwarded email reply."""
+        return (
+            "## Forward-Reply Task\n\n"
+            "Draft a reply to the forwarded email below using Milos's writing style.\n"
+            "Read `writing_style.md` first for voice and tone guidance.\n\n"
+            "### Milos's Instructions\n"
+            f"{parsed['instructions']}\n\n"
+            "### Original Email\n"
+            f"From: {parsed['original_from']}\n"
+            f"Date: {parsed['original_date']}\n"
+            f"Subject: {parsed['original_subject']}\n\n"
+            f"{parsed['original_body']}\n\n"
+            "### What To Do\n"
+            f"1. Read `writing_style.md` for Milos's voice\n"
+            f"2. Draft a reply addressing {parsed['original_from_name']} by first name\n"
+            f"3. Send it to milos.mandic.etf@gmail.com with subject "
+            f"\"Re: {parsed['original_subject']} \u2014 Draft Reply\" using email_cli.py send\n"
+            f"4. Return the draft text in your response"
+        )
 
     async def _check_bookmark_digest(self):
         """Safety-net: send bookmark digest if 5+ unsent bookmarks accumulated."""

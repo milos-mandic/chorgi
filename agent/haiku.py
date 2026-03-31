@@ -25,21 +25,30 @@ async def classify_and_respond(
     )
 
     # Try to parse JSON, handling possible markdown fencing
+    result = None
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
-        # Try extracting JSON from markdown code block
+        pass
+
+    if result is None:
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
         if match:
-            result = json.loads(match.group(1))
-        else:
-            # Last resort: find first { ... }
-            match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if match:
+            try:
+                result = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+    if result is None:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            try:
                 result = json.loads(match.group(0))
-            else:
-                # Couldn't parse — treat as haiku response
-                result = {"route": "haiku", "response": raw}
+            except json.JSONDecodeError:
+                pass
+
+    if result is None:
+        result = {"route": "haiku", "response": raw}
 
     result["_usage"] = usage
     return result

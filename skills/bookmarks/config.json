@@ -1,0 +1,7 @@
+{
+  "name": "bookmarks",
+  "description": "Save and retrieve bookmarks. User sends a URL or link with optional notes, and the skill stores it. Can list, search, and tag bookmarks.",
+  "tools": ["Bash", "Read", "Write"],
+  "max_turns": 5,
+  "timeout_seconds": 60
+}

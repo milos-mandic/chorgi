@@ -86,10 +86,9 @@ class Orchestrator:
 
         if route == "haiku":
             response = classification.get("response", "I'm not sure how to respond.")
-            # Check for URLs to bookmark
-            bookmark_note = await self._handle_bookmark_url(message)
-            if bookmark_note:
-                response = f"{response}\n\n{bookmark_note}"
+            # Process bookmarks in background — don't delay the response
+            if bookmarks.extract_urls(message):
+                asyncio.create_task(self._handle_bookmark_url_background(message))
             self._add_to_history("assistant", response)
             return {"type": "haiku", "response": response}
 
@@ -139,13 +138,18 @@ class Orchestrator:
             full_context = self.memory.get_full_context()
             responses = []
 
+            original_message = classification.get("message", "")
+
             async def _run_one(task_info):
                 skill_name = task_info["skill"]
                 summary = task_info["summary"]
+                # Include the original user message so sub-agents see URLs,
+                # code snippets, and other details Haiku may have paraphrased away.
+                task = f"{summary}\n\n# Original message\n{original_message}" if original_message else summary
                 skill_config = self.skills.get(skill_name) or self.skills.get("general")
                 if not skill_config:
                     return skill_name, "No skills available.", True
-                result = await self._spawn_with_limit(skill_config, summary, full_context, self.send_to_user)
+                result = await self._spawn_with_limit(skill_config, task, full_context, self.send_to_user)
                 elapsed = result.get("elapsed_s")
                 self._log_cost("sub_agent", skill=skill_name, elapsed_s=elapsed)
                 if result.get("error"):
@@ -195,7 +199,10 @@ class Orchestrator:
                     await notify_fn("I'm working on a couple things — your task is queued.")
                 except Exception:
                     pass
-            await self._semaphore.acquire()
+            try:
+                await asyncio.wait_for(self._semaphore.acquire(), timeout=300)
+            except asyncio.TimeoutError:
+                return {"error": True, "message": "All agent slots busy — try again shortly.", "elapsed_s": 0}
         try:
             return await spawn_sub_agent(skill_config, task, context)
         finally:
@@ -310,7 +317,8 @@ class Orchestrator:
         # Remove internal fields, keep only schedule definition
         to_save = {k: v for k, v in schedule.items()
                    if k in ("name", "trigger", "at_hour", "interval_minutes",
-                            "type", "skill", "prompt", "notify_user")}
+                            "type", "skill", "prompt", "notify_user",
+                            "display_name", "silent_when_empty")}
         try:
             path.write_text(json.dumps(to_save, indent=2) + "\n")
         except OSError as e:
@@ -334,6 +342,15 @@ class Orchestrator:
             self.memory.clear_scratch()
 
     # --- Bookmarks ---
+
+    async def _handle_bookmark_url_background(self, message: str):
+        """Background bookmark processing. Sends notification when done."""
+        try:
+            note = await self._handle_bookmark_url(message)
+            if note and self.send_to_user:
+                await self.send_to_user(note)
+        except Exception as e:
+            logger.warning(f"Background bookmark processing failed: {e}")
 
     async def _handle_bookmark_url(self, message: str) -> str | None:
         """Detect URLs in message, fetch metadata, summarize, store. Returns note or None."""
@@ -359,7 +376,7 @@ class Orchestrator:
                 summary = description or "No summary available."
 
             unsent_count = bookmarks.add_bookmark(url, title, summary)
-            parts.append(f"Saved! **{title}**\n{summary}")
+            parts.append(f"Saved! {title}\n{summary}")
 
             self.memory.append_short_term(f"Bookmarked: {title} — {url}")
 

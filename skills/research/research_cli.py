@@ -5,7 +5,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).parent
@@ -108,8 +108,18 @@ def cmd_sources_remove(args):
 
 # --- Send briefing ---
 
+def _is_within_24h(date_str):
+    """Check if a date string (e.g. 'Mar 28, 2026') is within the last 24 hours."""
+    try:
+        article_date = datetime.strptime(date_str.strip(), "%b %d, %Y")
+        cutoff = datetime.now() - timedelta(hours=24)
+        return article_date >= cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
+    except (ValueError, AttributeError):
+        return False
+
+
 def cmd_send_briefing(args):
-    """Read briefing_draft.json, deduplicate, format as HTML, send via email."""
+    """Read briefing_draft.json, deduplicate, filter to last 24h, format as HTML, send via email."""
     if not BRIEFING_DRAFT.exists():
         print("No briefing draft found at workspace/briefing_draft.json")
         sys.exit(1)
@@ -123,17 +133,20 @@ def cmd_send_briefing(args):
     history = _load_sent_history()
     sent_urls = set(history["sent_urls"])
 
-    # Filter out previously sent articles
+    # Filter out previously sent articles and articles older than 24h
     new_urls = []
     filtered_topics = []
     for topic in draft.get("topics", []):
-        new_articles = [a for a in topic.get("articles", []) if a.get("url") not in sent_urls]
+        new_articles = [
+            a for a in topic.get("articles", [])
+            if a.get("url") not in sent_urls and _is_within_24h(a.get("date", ""))
+        ]
         if new_articles:
             filtered_topics.append({"name": topic["name"], "articles": new_articles})
             new_urls.extend(a["url"] for a in new_articles)
 
     if not filtered_topics:
-        print("No new articles to send (all previously sent).")
+        print("No fresh articles to send (none from the last 24 hours).")
         return
 
     draft["topics"] = filtered_topics

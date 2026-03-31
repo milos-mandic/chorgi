@@ -231,6 +231,9 @@ def find_free_slots(
         end_str = e.get("end", "")
         if not start_str or not end_str:
             continue
+        # Skip all-day events (date-only strings) — they don't block time slots
+        if "T" not in start_str:
+            continue
         try:
             s = datetime.fromisoformat(start_str)
             en = datetime.fromisoformat(end_str)

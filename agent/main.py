@@ -49,7 +49,11 @@ def load_secrets():
                 continue
             if "=" in line:
                 key, value = line.split("=", 1)
-                secrets[key.strip()] = value.strip()
+                value = value.strip()
+                # Strip surrounding quotes (shell-style .env files)
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                secrets[key.strip()] = value
     # Environment variables override file values
     for key in ("ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_USER_ID",
                  "OPENAI_API_KEY", "WEBHOOK_SECRET", "WEBHOOK_PORT",
@@ -63,35 +67,26 @@ def load_secrets():
     return secrets
 
 
-def md_to_telegram_html(text: str) -> str:
-    """Convert common markdown to Telegram-supported HTML."""
-    # Escape HTML entities first
-    text = text.replace("&", "&amp;")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
+def strip_markdown(text: str) -> str:
+    """Strip markdown formatting to plain text for Telegram."""
+    # Code blocks: ```...``` → just the content
+    text = re.sub(r"```(?:\w*)\n?(.*?)```", r"\1", text, flags=re.DOTALL)
 
-    # Code blocks: ```...``` → <pre>...</pre>
-    text = re.sub(r"```(?:\w*)\n?(.*?)```", r"<pre>\1</pre>", text, flags=re.DOTALL)
+    # Inline code: `...` → just the content
+    text = re.sub(r"`([^`]+)`", r"\1", text)
 
-    # Inline code: `...` → <code>...</code>
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    # Bold/italic: **text** or *text* → just the text
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.+?)\*", r"\1", text)
 
-    # Bold: **...** → <b>...</b>
-    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    # Headers: ## heading → heading
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
 
     # List items: - item → • item
     text = re.sub(r"^- ", "• ", text, flags=re.MULTILINE)
 
     return text
 
-
-def _strip_html(html: str) -> str:
-    """Strip Telegram HTML tags back to plain text."""
-    text = html
-    for tag in ("b", "pre", "code"):
-        text = text.replace(f"<{tag}>", "").replace(f"</{tag}>", "")
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    return text
 
 
 def _smart_chunk(text: str, limit: int = 4096) -> list[str]:
@@ -112,13 +107,10 @@ def _smart_chunk(text: str, limit: int = 4096) -> list[str]:
 
 
 async def _send_response(update: Update, response: str):
-    """Send a response with HTML formatting, falling back to plain text."""
-    html = md_to_telegram_html(response)
-    for chunk in _smart_chunk(html):
-        try:
-            await update.message.reply_text(chunk, parse_mode="HTML")
-        except Exception:
-            await update.message.reply_text(_strip_html(chunk))
+    """Send a plain-text response (no parse_mode — Telegram renders as-is)."""
+    clean = strip_markdown(response)
+    for chunk in _smart_chunk(clean):
+        await update.message.reply_text(chunk)
 
 
 class _NeedsOnboardingFilter(filters.MessageFilter):
@@ -262,16 +254,9 @@ async def post_init(application: Application):
     authorized_user_id = orchestrator.authorized_user_id
 
     async def send_to_user(message: str):
-        html = md_to_telegram_html(message)
-        for chunk in _smart_chunk(html):
-            try:
-                await bot.send_message(
-                    chat_id=authorized_user_id, text=chunk, parse_mode="HTML"
-                )
-            except Exception:
-                await bot.send_message(
-                    chat_id=authorized_user_id, text=_strip_html(chunk)
-                )
+        clean = strip_markdown(message)
+        for chunk in _smart_chunk(clean):
+            await bot.send_message(chat_id=authorized_user_id, text=chunk)
 
     orchestrator.send_to_user = send_to_user
 

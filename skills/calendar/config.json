@@ -1,6 +1,6 @@
 {
   "name": "calendar",
-  "description": "Calendar and task scheduling. View calendar events, create events on chorgibot calendar, find optimal time slots based on availability and preferences.",
+  "description": "Calendar events with specific dates and times. View calendar, create/update/delete events, find free time slots. Use when the user specifies WHEN something should happen ('Friday at 3pm', 'tomorrow morning'). NOT for vague to-do items without a specific time.",
   "tools": ["Bash", "Read", "Write"],
   "max_turns": 12,
   "timeout_seconds": 300

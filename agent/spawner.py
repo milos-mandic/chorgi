@@ -70,7 +70,9 @@ async def spawn_sub_agent(
 - Lead with the result — what happened, what was done
 - NEVER mention error codes, CLI flags, API names, file paths, or stack traces
 - If something partially failed, explain what worked and what didn't in plain language
-- Use short sentences. No filler."""
+- Use short sentences. No filler.
+- NEVER use markdown formatting (no **, *, `, #, ```, - for lists, etc.) — your output goes to Telegram which does not render markdown.
+- Use plain text with emojis for emphasis. Use • for bullet points."""
 
     # Strip CLAUDECODE env var so the child doesn't think it's nested.
     # Strip ANTHROPIC_API_KEY so Claude Code uses OAuth instead of billing
@@ -79,6 +81,8 @@ async def spawn_sub_agent(
 
     logger.info(f"Spawning sub-agent for skill '{skill_name}': {task[:100]}")
     start = time.monotonic()
+    process = None
+    stdout = b""
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -122,8 +126,9 @@ async def spawn_sub_agent(
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
         logger.error(f"Sub-agent '{skill_name}' timed out after {elapsed:.1f}s")
-        process.kill()
-        await process.wait()
+        if process is not None:
+            process.kill()
+            await process.wait()
         return {"error": True, "message": "Sub-agent timed out", "elapsed_s": round(elapsed, 1)}
     except json.JSONDecodeError:
         elapsed = time.monotonic() - start
