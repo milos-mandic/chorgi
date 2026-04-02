@@ -32,7 +32,7 @@ Personal assistant agent harness. Telegram interface, Haiku for routing/instant 
 
 Each skill has: `CLAUDE.md` (behavior), `config.json` (routing metadata + tool/turn/timeout limits), `workspace/` (scratch dir). Sub-agents run with `--cwd <skill_dir>` so they read the skill's own CLAUDE.md.
 
-Current skills: `general`, `fathom`, `email`, `calendar`, `research`, `linkedin`.
+Current skills: `general`, `fathom`, `email`, `calendar`, `research`, `linkedin`, `bookmarks`, `tasks`.
 
 ## Schedules
 
@@ -51,4 +51,4 @@ Always stop the bot before making changes, restart after. The bot runs as a laun
 
 ## Env Vars (`.personal/secrets.env`)
 
-`ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`, `OPENAI_API_KEY`, `WEBHOOK_SECRET`, `WEBHOOK_PORT`, `FATHOM_WEBHOOK_SECRET`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `CALENDAR_OWNER_ID`, `CALENDAR_BOT_ID`
+`ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`, `OPENAI_API_KEY`, `WEBHOOK_SECRET`, `WEBHOOK_PORT`, `FATHOM_WEBHOOK_SECRET`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `CALENDAR_OWNER_ID`, `CALENDAR_BOT_ID`, `LINKEDIN_COOKIE`

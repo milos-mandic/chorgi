@@ -1,22 +1,87 @@
 #!/usr/bin/env python3
-"""CLI wrapper for LinkedIn content operations. Used by the LinkedIn sub-agent via Bash."""
+"""LinkedIn Growth Management CLI — state management for content planning, drafting, and tracking."""
 
-import argparse
 import json
 import sys
-from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-SKILL_DIR = Path(__file__).parent
-WORKSPACE = SKILL_DIR / "workspace"
+WORKSPACE = Path(__file__).parent / "workspace"
 CALENDAR_FILE = WORKSPACE / "content_calendar.json"
-IDEAS_FILE = WORKSPACE / "ideas_backlog.json"
+FEED_FILE = WORKSPACE / "content_feed.json"
 HISTORY_FILE = WORKSPACE / "post_history.json"
+PILLARS_FILE = WORKSPACE / "pillars.json"
+VIRAL_FILE = WORKSPACE / "viral_log.json"
 DRAFTS_DIR = WORKSPACE / "drafts"
 
-SEEN_POSTS_FILE = WORKSPACE / "seen_posts.json"
-FORMATS = ["thought_leadership", "practical_tip", "story", "question", "hot_take", "curated"]
+DEFAULT_PILLARS = {
+    "pillars": [
+        {
+            "id": "the_fde_role",
+            "name": "The FDE Role",
+            "description": "What the role is, career path, day-to-day, hiring, growth",
+            "example_topics": [
+                "Career path from SE to FDE",
+                "What FDE interviews look like",
+                "Day in the life of an FDE Lead",
+                "FDE vs Solutions Engineer vs DevRel",
+                "Building an FDE team from scratch",
+            ],
+            "target_frequency": "1x/week",
+        },
+        {
+            "id": "technical_craft",
+            "name": "Technical Craft",
+            "description": "Demos, POCs, customer engineering, technical excellence",
+            "example_topics": [
+                "Demo prep checklist",
+                "Building POCs that convert",
+                "Debugging in customer environments",
+                "Technical discovery techniques",
+                "Live coding in sales calls",
+            ],
+            "target_frequency": "1x/week",
+        },
+        {
+            "id": "ai_agents_in_field",
+            "name": "AI/Agents in the Field",
+            "description": "AI agent deployment, customer-facing AI, enterprise AI adoption",
+            "example_topics": [
+                "Agent hallucination in demos",
+                "Customer trust with AI",
+                "Agentic workflows in enterprise",
+                "AI coding assistants in field work",
+                "Building AI demos that don't break",
+            ],
+            "target_frequency": "1x/week",
+        },
+        {
+            "id": "fde_hub_community",
+            "name": "FDE Hub Community",
+            "description": "Newsletter, community building, FDE Hub growth and content",
+            "example_topics": [
+                "Newsletter recap with unique angle",
+                "Community milestone",
+                "Reader story or feedback",
+                "Behind the scenes of FDE Hub",
+            ],
+            "target_frequency": "0.5x/week",
+        },
+        {
+            "id": "industry_takes",
+            "name": "Industry Takes",
+            "description": "Trends affecting FDEs/SEs — market moves, tool shifts, hiring patterns",
+            "example_topics": [
+                "Big company launches FDE practice",
+                "DevRel budget trends",
+                "SE compensation data",
+                "GTM engineering emergence",
+                "Enterprise buying behavior shifts",
+            ],
+            "target_frequency": "0.5x/week",
+        },
+    ]
+}
 
 
 def _load_json(path, default):
@@ -26,303 +91,530 @@ def _load_json(path, default):
 
 
 def _save_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-# --- Calendar commands ---
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
-def cmd_calendar_show(args):
-    cal = _load_json(CALENDAR_FILE, {"week_of": None, "days": []})
-    if not cal["days"]:
-        print("No calendar set. Use 'calendar generate' to create context for planning.")
+
+def _parse_date(s):
+    """Parse date string or weekday name to a date string."""
+    weekdays = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+        "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
+    }
+    if s.lower() == "today":
+        return datetime.now().strftime("%Y-%m-%d")
+    if s.lower() == "tomorrow":
+        return (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    if s.lower() in weekdays:
+        target = weekdays[s.lower()]
+        today = datetime.now()
+        days_ahead = target - today.weekday()
+        if days_ahead < 0:
+            days_ahead += 7
+        return (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+    return s
+
+
+# ── Calendar ──────────────────────────────────────────────────────────
+
+def calendar_show():
+    cal = _load_json(CALENDAR_FILE, None)
+    if not cal:
+        print("No calendar exists. Generate one first.")
         return
-    print(f"Week of: {cal['week_of']}")
-    print()
+    print(f"Week of {cal['week_of']} (created {cal.get('created_at', 'unknown')})\n")
     for day in cal["days"]:
-        status = day.get("status", "planned")
-        fmt = day.get("format", "?")
-        print(f"  {day['date']} ({day.get('weekday', '?')}) [{status}]")
-        print(f"    Topic: {day.get('topic', 'TBD')}")
-        print(f"    Format: {fmt}")
+        status = day["status"].upper()
+        pillar = day.get("pillar", "?")
+        print(f"  {day['weekday']} {day['date']} [{status}]")
+        print(f"    Topic: {day['topic']}")
+        print(f"    Format: {day['format']} | Pillar: {pillar}")
         if day.get("angle"):
             print(f"    Angle: {day['angle']}")
+        feed_ids = day.get("feed_ids", [])
+        if feed_ids:
+            print(f"    Feed items: {feed_ids}")
         print()
 
 
-def cmd_calendar_generate(args):
-    """Output context for the sub-agent to use when generating a weekly calendar."""
-    history = _load_json(HISTORY_FILE, {"posts": []})
-    ideas = _load_json(IDEAS_FILE, {"ideas": []})
-    cal = _load_json(CALENDAR_FILE, {"week_of": None, "days": []})
+def calendar_context():
+    """Output comprehensive planning context for weekly calendar generation."""
+    print("=== PLANNING CONTEXT ===\n")
 
-    # Recent history (last 4 weeks)
-    recent = history["posts"][-20:] if history["posts"] else []
+    # Recent history
+    history = _load_json(HISTORY_FILE, {"posts": []})
+    recent = history["posts"][-20:]
+    if recent:
+        print("-- Recent Post History (last 20) --")
+        for p in recent:
+            print(f"  {p['date']} | {p['format']} | {p.get('pillar', '?')} | {p['topic']}")
+        print()
+    else:
+        print("-- No post history yet --\n")
 
     # Format distribution
-    fmt_counts = Counter(p.get("format", "unknown") for p in history["posts"])
+    if recent:
+        print("-- Format Distribution --")
+        formats = {}
+        for p in recent:
+            formats[p["format"]] = formats.get(p["format"], 0) + 1
+        for fmt, count in sorted(formats.items(), key=lambda x: -x[1]):
+            print(f"  {fmt}: {count}")
+        print()
 
-    context = {
-        "current_calendar": cal,
-        "recent_posts": recent,
-        "format_distribution": dict(fmt_counts),
-        "available_formats": FORMATS,
-        "unused_ideas": [i for i in ideas["ideas"] if not i.get("used")],
-        "total_posts": len(history["posts"]),
-    }
-    print(json.dumps(context, indent=2))
+    # Pillar rotation
+    pillars = _load_json(PILLARS_FILE, DEFAULT_PILLARS)
+    print("-- Pillar Rotation (least-recently-used first) --")
+    pillar_last_used = {}
+    for p in pillars["pillars"]:
+        pillar_last_used[p["id"]] = None
+    for post in history["posts"]:
+        pid = post.get("pillar")
+        if pid:
+            pillar_last_used[pid] = post["date"]
+    sorted_pillars = sorted(pillar_last_used.items(), key=lambda x: x[1] or "0000-00-00")
+    for pid, last in sorted_pillars:
+        pname = next((p["name"] for p in pillars["pillars"] if p["id"] == pid), pid)
+        print(f"  {pname} ({pid}): last used {last or 'never'}")
+    print()
+
+    # Unused feed items
+    feed = _load_json(FEED_FILE, {"next_id": 1, "items": []})
+    unused = [i for i in feed["items"] if not i["used"]]
+    if unused:
+        print(f"-- Unused Feed Items ({len(unused)}) --")
+        for item in unused:
+            pillar = item.get("pillar") or "untagged"
+            print(f"  [{item['id']}] ({pillar}) {item['content'][:100]}")
+            if item.get("key_insight"):
+                print(f"       Insight: {item['key_insight']}")
+        print()
+    else:
+        print("-- No unused feed items --\n")
+
+    # Viral patterns
+    viral = _load_json(VIRAL_FILE, {"entries": []})
+    if viral["entries"]:
+        print("-- Viral Post Patterns --")
+        for entry in viral["entries"][-5:]:
+            print(f"  {entry['date']} | {entry.get('format', '?')} | {entry.get('pillar', '?')}")
+            if entry.get("what_worked"):
+                print(f"    What worked: {entry['what_worked'][:150]}")
+        print()
+
+    # Current calendar (if exists)
+    cal = _load_json(CALENDAR_FILE, None)
+    if cal:
+        print(f"-- Current Calendar (week of {cal['week_of']}) --")
+        for day in cal["days"]:
+            print(f"  {day['weekday']} {day['date']}: {day['topic']} [{day['status']}]")
+        print()
 
 
-def cmd_calendar_set(args):
-    cal = json.loads(args.json_data)
-    if "week_of" not in cal or "days" not in cal:
-        print("Error: calendar JSON must have 'week_of' and 'days' keys")
-        sys.exit(1)
-    # Ensure each day has a status
-    for day in cal["days"]:
-        day.setdefault("status", "planned")
+def calendar_set(json_str):
+    cal = json.loads(json_str)
+    cal["created_at"] = _now_iso()
     _save_json(CALENDAR_FILE, cal)
-    print(f"Calendar set for week of {cal['week_of']} with {len(cal['days'])} days")
+    print(f"Calendar saved for week of {cal['week_of']} ({len(cal['days'])} days)")
 
 
-def cmd_calendar_update(args):
-    cal = _load_json(CALENDAR_FILE, {"week_of": None, "days": []})
-    found = False
+def calendar_update(date, status):
+    cal = _load_json(CALENDAR_FILE, None)
+    if not cal:
+        print("No calendar exists.")
+        return
+    date = _parse_date(date)
     for day in cal["days"]:
-        if day["date"] == args.date:
-            day["status"] = args.status
-            found = True
-            break
-    if not found:
-        print(f"Date {args.date} not found in calendar")
-        sys.exit(1)
-    _save_json(CALENDAR_FILE, cal)
-    print(f"Updated {args.date} status to '{args.status}'")
+        if day["date"] == date:
+            day["status"] = status
+            _save_json(CALENDAR_FILE, cal)
+            print(f"Updated {date} to {status}")
+            return
+    print(f"No entry found for {date}")
 
 
-# --- Draft commands ---
-
-def cmd_draft(args):
-    """Output the calendar entry for a given date or weekday name."""
-    cal = _load_json(CALENDAR_FILE, {"week_of": None, "days": []})
-    if not cal["days"]:
-        print("No calendar set.")
-        sys.exit(1)
-
-    query = args.date_or_day.lower()
+def calendar_get(date_or_day):
+    cal = _load_json(CALENDAR_FILE, None)
+    if not cal:
+        print("No calendar exists.")
+        return
+    target = _parse_date(date_or_day)
     for day in cal["days"]:
-        if day["date"] == query or day.get("weekday", "").lower() == query:
+        if day["date"] == target:
             print(json.dumps(day, indent=2))
             return
-
-    print(f"No entry found for '{args.date_or_day}'. Available: {', '.join(d['date'] for d in cal['days'])}")
-    sys.exit(1)
+    print(f"No entry for {target}")
 
 
-# --- Ideas commands ---
+# ── Content Feed ──────────────────────────────────────────────────────
 
-def cmd_ideas_list(args):
-    ideas = _load_json(IDEAS_FILE, {"ideas": []})
-    unused = [i for i in ideas["ideas"] if not i.get("used")]
-    used = [i for i in ideas["ideas"] if i.get("used")]
-    print(f"Unused ideas ({len(unused)}):")
-    for i in unused:
-        added = i.get("added", "?")
-        print(f"  - {i['topic']} (added: {added})")
-    if used:
-        print(f"\nUsed ideas ({len(used)}):")
-        for i in used:
-            print(f"  - {i['topic']} (used: {i.get('used_date', '?')})")
+def feed_list(pillar=None, unused_only=False):
+    feed = _load_json(FEED_FILE, {"next_id": 1, "items": []})
+    items = feed["items"]
+    if unused_only:
+        items = [i for i in items if not i["used"]]
+    if pillar:
+        items = [i for i in items if i.get("pillar") == pillar]
+    if not items:
+        print("No feed items found.")
+        return
+    print(f"Feed items ({len(items)}):\n")
+    for item in items:
+        used = "USED" if item["used"] else "unused"
+        p = item.get("pillar") or "untagged"
+        print(f"  [{item['id']}] ({p}) [{used}] {item['content'][:120]}")
+        if item.get("key_insight"):
+            print(f"       Insight: {item['key_insight']}")
+        if item.get("url"):
+            print(f"       URL: {item['url']}")
+        print()
 
 
-def cmd_ideas_add(args):
-    ideas = _load_json(IDEAS_FILE, {"ideas": []})
-    idea = {
-        "topic": args.topic,
-        "added": datetime.now().strftime("%Y-%m-%d"),
+def feed_add(json_str):
+    data = json.loads(json_str)
+    feed = _load_json(FEED_FILE, {"next_id": 1, "items": []})
+    item = {
+        "id": feed["next_id"],
+        "content": data["content"],
+        "source": data.get("source", "manual"),
+        "url": data.get("url"),
+        "pillar": data.get("pillar"),
+        "key_insight": data.get("key_insight"),
+        "added": _now_iso(),
         "used": False,
+        "used_in": None,
     }
-    ideas["ideas"].append(idea)
-    _save_json(IDEAS_FILE, ideas)
-    print(f"Added idea: {args.topic}")
+    feed["items"].append(item)
+    feed["next_id"] += 1
+    _save_json(FEED_FILE, feed)
+    print(f"Added feed item [{item['id']}]: {item['content'][:80]}")
+    if item["pillar"]:
+        print(f"  Pillar: {item['pillar']}")
+    if item["key_insight"]:
+        print(f"  Insight: {item['key_insight']}")
 
 
-def cmd_ideas_use(args):
-    ideas = _load_json(IDEAS_FILE, {"ideas": []})
-    topic_lower = args.topic.lower()
-    found = False
-    for idea in ideas["ideas"]:
-        if idea["topic"].lower() == topic_lower:
-            idea["used"] = True
-            idea["used_date"] = datetime.now().strftime("%Y-%m-%d")
-            found = True
-            break
-    if not found:
-        print(f"Idea not found: {args.topic}")
-        sys.exit(1)
-    _save_json(IDEAS_FILE, ideas)
-    print(f"Marked idea as used: {args.topic}")
+def feed_use(item_id):
+    feed = _load_json(FEED_FILE, {"next_id": 1, "items": []})
+    item_id = int(item_id)
+    for item in feed["items"]:
+        if item["id"] == item_id:
+            item["used"] = True
+            item["used_in"] = datetime.now().strftime("%Y-%m-%d")
+            _save_json(FEED_FILE, feed)
+            print(f"Marked feed item [{item_id}] as used")
+            return
+    print(f"Feed item [{item_id}] not found")
 
 
-# --- History commands ---
+def feed_remove(item_id):
+    feed = _load_json(FEED_FILE, {"next_id": 1, "items": []})
+    item_id = int(item_id)
+    feed["items"] = [i for i in feed["items"] if i["id"] != item_id]
+    _save_json(FEED_FILE, feed)
+    print(f"Removed feed item [{item_id}]")
 
-def cmd_history_log(args):
+
+# ── Post History ──────────────────────────────────────────────────────
+
+def history_log(json_str):
+    data = json.loads(json_str)
     history = _load_json(HISTORY_FILE, {"posts": []})
-    if args.format not in FORMATS:
-        print(f"Invalid format '{args.format}'. Valid: {', '.join(FORMATS)}")
-        sys.exit(1)
-    entry = {
-        "topic": args.topic,
-        "format": args.format,
-        "date": datetime.now().strftime("%Y-%m-%d"),
+    post = {
+        "date": data["date"],
+        "topic": data["topic"],
+        "format": data["format"],
+        "pillar": data.get("pillar"),
+        "draft_file": data.get("draft_file"),
+        "performance": data.get("performance"),
     }
-    history["posts"].append(entry)
+    history["posts"].append(post)
     _save_json(HISTORY_FILE, history)
-    print(f"Logged post: {args.topic} ({args.format})")
+    print(f"Logged: {post['date']} | {post['format']} | {post.get('pillar', '?')} | {post['topic']}")
 
 
-def cmd_history_show(args):
+def history_show(weeks=4):
     history = _load_json(HISTORY_FILE, {"posts": []})
-    weeks = args.weeks or 4
+    if not history["posts"]:
+        print("No post history yet.")
+        return
     cutoff = (datetime.now() - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
-    recent = [p for p in history["posts"] if p.get("date", "") >= cutoff]
+    recent = [p for p in history["posts"] if p["date"] >= cutoff]
     if not recent:
         print(f"No posts in the last {weeks} weeks.")
         return
-    print(f"Posts in last {weeks} weeks ({len(recent)}):")
+    print(f"Post history (last {weeks} weeks, {len(recent)} posts):\n")
     for p in recent:
-        print(f"  {p['date']}  [{p.get('format', '?')}]  {p['topic']}")
+        perf = ""
+        if p.get("performance"):
+            perf = f" | {p['performance']}"
+        print(f"  {p['date']} | {p['format']} | {p.get('pillar', '?')} | {p['topic']}{perf}")
 
 
-def cmd_history_formats(args):
+def history_formats():
     history = _load_json(HISTORY_FILE, {"posts": []})
-    counts = Counter(p.get("format", "unknown") for p in history["posts"])
-    total = len(history["posts"])
-    print(f"Format distribution ({total} total posts):")
-    for fmt in FORMATS:
-        count = counts.get(fmt, 0)
-        pct = (count / total * 100) if total else 0
-        bar = "\u2588" * int(pct / 5) if total else ""
-        print(f"  {fmt:20s}  {count:3d}  ({pct:4.1f}%)  {bar}")
-    unknown = counts.get("unknown", 0)
-    if unknown:
-        print(f"  {'unknown':20s}  {unknown:3d}")
-
-
-# --- Monitor commands ---
-
-def cmd_monitor_seen(args):
-    data = _load_json(SEEN_POSTS_FILE, {"posts": []})
-    if not data["posts"]:
-        print("No seen posts tracked yet.")
+    if not history["posts"]:
+        print("No post history yet.")
         return
-    print(f"Seen posts ({len(data['posts'])}):")
-    for p in data["posts"]:
-        author = p.get("author", "?")
-        title = p.get("title", "?")
-        found = p.get("found_at", "?")
-        print(f"  [{found}] {author} — {title}")
-        print(f"    {p['url']}")
+    formats = {}
+    total = len(history["posts"])
+    for p in history["posts"]:
+        formats[p["format"]] = formats.get(p["format"], 0) + 1
+    print(f"Format distribution ({total} total posts):\n")
+    for fmt, count in sorted(formats.items(), key=lambda x: -x[1]):
+        pct = round(100 * count / total)
+        bar = "#" * (count * 2)
+        print(f"  {fmt:20s} {count:3d} ({pct:2d}%) {bar}")
 
 
-def cmd_monitor_mark(args):
-    data = _load_json(SEEN_POSTS_FILE, {"posts": []})
-    new_posts = json.loads(args.json_data)
-    existing_urls = {p["url"] for p in data["posts"]}
-    added = 0
-    now = datetime.now().isoformat()
-    for post in new_posts:
-        if post["url"] not in existing_urls:
-            post["found_at"] = now
-            data["posts"].append(post)
-            existing_urls.add(post["url"])
-            added += 1
-    # Auto-prune entries older than 7 days
-    cutoff = (datetime.now() - timedelta(days=7)).isoformat()
-    data["posts"] = [p for p in data["posts"] if p.get("found_at", "") >= cutoff]
-    _save_json(SEEN_POSTS_FILE, data)
-    print(f"Marked {added} new post(s) as seen. Total tracked: {len(data['posts'])}")
+def history_pillars():
+    history = _load_json(HISTORY_FILE, {"posts": []})
+    if not history["posts"]:
+        print("No post history yet.")
+        return
+    pillar_counts = {}
+    total = len(history["posts"])
+    for p in history["posts"]:
+        pid = p.get("pillar", "unknown")
+        pillar_counts[pid] = pillar_counts.get(pid, 0) + 1
+    print(f"Pillar distribution ({total} total posts):\n")
+    for pid, count in sorted(pillar_counts.items(), key=lambda x: -x[1]):
+        pct = round(100 * count / total)
+        bar = "#" * (count * 2)
+        print(f"  {pid:25s} {count:3d} ({pct:2d}%) {bar}")
 
 
-def cmd_monitor_clear(args):
-    _save_json(SEEN_POSTS_FILE, {"posts": []})
-    print("Cleared all seen posts.")
+# ── Pillars ───────────────────────────────────────────────────────────
 
+def pillars_show():
+    pillars = _load_json(PILLARS_FILE, DEFAULT_PILLARS)
+    if not PILLARS_FILE.exists():
+        _save_json(PILLARS_FILE, pillars)
+    print("Content Pillars:\n")
+    for p in pillars["pillars"]:
+        print(f"  {p['name']} ({p['id']})")
+        print(f"    {p['description']}")
+        print(f"    Target: {p['target_frequency']}")
+        print(f"    Examples: {', '.join(p['example_topics'][:3])}")
+        print()
+
+
+def pillars_rotation():
+    pillars = _load_json(PILLARS_FILE, DEFAULT_PILLARS)
+    history = _load_json(HISTORY_FILE, {"posts": []})
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    pillar_last = {}
+    pillar_count_4w = {}
+    cutoff_4w = (datetime.now() - timedelta(weeks=4)).strftime("%Y-%m-%d")
+
+    for p in pillars["pillars"]:
+        pillar_last[p["id"]] = None
+        pillar_count_4w[p["id"]] = 0
+
+    for post in history["posts"]:
+        pid = post.get("pillar")
+        if pid and pid in pillar_last:
+            pillar_last[pid] = post["date"]
+            if post["date"] >= cutoff_4w:
+                pillar_count_4w[pid] += 1
+
+    print("Pillar Rotation (least-recently-used first):\n")
+    sorted_pillars = sorted(pillar_last.items(), key=lambda x: x[1] or "0000-00-00")
+    for pid, last in sorted_pillars:
+        pname = next((p["name"] for p in pillars["pillars"] if p["id"] == pid), pid)
+        freq = next((p["target_frequency"] for p in pillars["pillars"] if p["id"] == pid), "?")
+        last_str = last or "never"
+        if last:
+            days_ago = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days
+            last_str = f"{last} ({days_ago}d ago)"
+        print(f"  {pname:25s} last: {last_str:30s} 4w count: {pillar_count_4w[pid]} (target: {freq})")
+
+
+# ── Viral Log ─────────────────────────────────────────────────────────
+
+def viral_log(json_str):
+    data = json.loads(json_str)
+    viral = _load_json(VIRAL_FILE, {"entries": []})
+    entry = {
+        "date": data["date"],
+        "topic": data["topic"],
+        "format": data.get("format"),
+        "pillar": data.get("pillar"),
+        "metrics": data.get("metrics", {}),
+        "what_worked": data.get("what_worked"),
+        "hook": data.get("hook"),
+        "day_of_week": data.get("day_of_week"),
+        "logged_at": _now_iso(),
+    }
+    viral["entries"].append(entry)
+    _save_json(VIRAL_FILE, viral)
+    print(f"Viral post logged: {entry['date']} | {entry['topic']}")
+    if entry["metrics"]:
+        m = entry["metrics"]
+        print(f"  Metrics: {m.get('likes', '?')} likes, {m.get('comments', '?')} comments, {m.get('impressions', '?')} impressions")
+
+
+def viral_show(last_n=10):
+    viral = _load_json(VIRAL_FILE, {"entries": []})
+    if not viral["entries"]:
+        print("No viral posts logged yet.")
+        return
+    entries = viral["entries"][-last_n:]
+    print(f"Viral Log (last {len(entries)}):\n")
+    for e in entries:
+        m = e.get("metrics", {})
+        print(f"  {e['date']} | {e.get('format', '?')} | {e.get('pillar', '?')}")
+        print(f"    Topic: {e['topic']}")
+        print(f"    Metrics: {m.get('likes', '?')}L / {m.get('comments', '?')}C / {m.get('impressions', '?')}I")
+        if e.get("what_worked"):
+            print(f"    What worked: {e['what_worked'][:150]}")
+        if e.get("hook"):
+            print(f"    Hook: {e['hook'][:100]}")
+        print()
+
+
+def viral_patterns():
+    viral = _load_json(VIRAL_FILE, {"entries": []})
+    if not viral["entries"]:
+        print("No viral posts to analyze yet.")
+        return
+
+    entries = viral["entries"]
+    print(f"Viral Pattern Analysis ({len(entries)} posts):\n")
+
+    # Format distribution
+    formats = {}
+    for e in entries:
+        f = e.get("format", "unknown")
+        formats[f] = formats.get(f, 0) + 1
+    print("  By format:")
+    for f, c in sorted(formats.items(), key=lambda x: -x[1]):
+        print(f"    {f}: {c}")
+
+    # Pillar distribution
+    pillars = {}
+    for e in entries:
+        p = e.get("pillar", "unknown")
+        pillars[p] = pillars.get(p, 0) + 1
+    print("\n  By pillar:")
+    for p, c in sorted(pillars.items(), key=lambda x: -x[1]):
+        print(f"    {p}: {c}")
+
+    # Day of week
+    days = {}
+    for e in entries:
+        d = e.get("day_of_week", "unknown")
+        days[d] = days.get(d, 0) + 1
+    print("\n  By day:")
+    for d, c in sorted(days.items(), key=lambda x: -x[1]):
+        print(f"    {d}: {c}")
+
+    # Average metrics
+    likes = [e["metrics"].get("likes", 0) for e in entries if e.get("metrics")]
+    comments = [e["metrics"].get("comments", 0) for e in entries if e.get("metrics")]
+    if likes:
+        print(f"\n  Avg metrics: {sum(likes)//len(likes)} likes, {sum(comments)//len(comments)} comments")
+
+    # Hooks
+    hooks = [e["hook"] for e in entries if e.get("hook")]
+    if hooks:
+        print(f"\n  Hooks from viral posts:")
+        for h in hooks[-5:]:
+            print(f"    \"{h[:100]}\"")
+
+
+# ── CLI Router ────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="LinkedIn content CLI")
-    sub = parser.add_subparsers(dest="command", required=True)
+    args = sys.argv[1:]
+    if len(args) < 2:
+        print("Usage: python3 linkedin_cli.py <group> <command> [args]")
+        print("Groups: calendar, feed, history, pillars, viral")
+        sys.exit(1)
 
-    # calendar
-    cal_parser = sub.add_parser("calendar", help="Content calendar management")
-    cal_sub = cal_parser.add_subparsers(dest="action", required=True)
+    group, cmd = args[0], args[1]
+    rest = args[2:]
 
-    p = cal_sub.add_parser("show", help="Show current week's calendar")
-    p.set_defaults(func=cmd_calendar_show)
+    if group == "calendar":
+        if cmd == "show":
+            calendar_show()
+        elif cmd == "context":
+            calendar_context()
+        elif cmd == "set":
+            calendar_set(rest[0])
+        elif cmd == "update":
+            date = rest[0]
+            status = rest[rest.index("--status") + 1] if "--status" in rest else rest[1]
+            calendar_update(date, status)
+        elif cmd == "get":
+            calendar_get(rest[0])
+        else:
+            print(f"Unknown calendar command: {cmd}")
 
-    p = cal_sub.add_parser("generate", help="Output context for calendar generation")
-    p.set_defaults(func=cmd_calendar_generate)
+    elif group == "feed":
+        if cmd == "list":
+            pillar = None
+            unused = False
+            if "--pillar" in rest:
+                pillar = rest[rest.index("--pillar") + 1]
+            if "--unused" in rest:
+                unused = True
+            feed_list(pillar=pillar, unused_only=unused)
+        elif cmd == "add":
+            feed_add(rest[0])
+        elif cmd == "use":
+            feed_use(rest[0])
+        elif cmd == "remove":
+            feed_remove(rest[0])
+        else:
+            print(f"Unknown feed command: {cmd}")
 
-    p = cal_sub.add_parser("set", help="Set the weekly calendar from JSON")
-    p.add_argument("json_data", help="Full calendar JSON string")
-    p.set_defaults(func=cmd_calendar_set)
+    elif group == "history":
+        if cmd == "log":
+            history_log(rest[0])
+        elif cmd == "show":
+            weeks = 4
+            if "--weeks" in rest:
+                weeks = int(rest[rest.index("--weeks") + 1])
+            history_show(weeks)
+        elif cmd == "formats":
+            history_formats()
+        elif cmd == "pillars":
+            history_pillars()
+        else:
+            print(f"Unknown history command: {cmd}")
 
-    p = cal_sub.add_parser("update", help="Update a day's status")
-    p.add_argument("date", help="Date (YYYY-MM-DD)")
-    p.add_argument("--status", required=True, choices=["planned", "drafted", "posted", "skipped"])
-    p.set_defaults(func=cmd_calendar_update)
+    elif group == "pillars":
+        if cmd == "show":
+            pillars_show()
+        elif cmd == "rotation":
+            pillars_rotation()
+        else:
+            print(f"Unknown pillars command: {cmd}")
 
-    # draft
-    p = sub.add_parser("draft", help="Get calendar entry for drafting")
-    p.add_argument("date_or_day", help="Date (YYYY-MM-DD) or weekday name")
-    p.set_defaults(func=cmd_draft)
+    elif group == "viral":
+        if cmd == "log":
+            viral_log(rest[0])
+        elif cmd == "show":
+            last_n = 10
+            if "--last" in rest:
+                last_n = int(rest[rest.index("--last") + 1])
+            viral_show(last_n)
+        elif cmd == "patterns":
+            viral_patterns()
+        else:
+            print(f"Unknown viral command: {cmd}")
 
-    # ideas
-    ideas_parser = sub.add_parser("ideas", help="Ideas backlog management")
-    ideas_sub = ideas_parser.add_subparsers(dest="action", required=True)
-
-    p = ideas_sub.add_parser("list", help="List ideas")
-    p.set_defaults(func=cmd_ideas_list)
-
-    p = ideas_sub.add_parser("add", help="Add an idea")
-    p.add_argument("topic")
-    p.set_defaults(func=cmd_ideas_add)
-
-    p = ideas_sub.add_parser("use", help="Mark idea as used")
-    p.add_argument("topic")
-    p.set_defaults(func=cmd_ideas_use)
-
-    # history
-    hist_parser = sub.add_parser("history", help="Post history")
-    hist_sub = hist_parser.add_subparsers(dest="action", required=True)
-
-    p = hist_sub.add_parser("log", help="Log a posted piece")
-    p.add_argument("topic")
-    p.add_argument("format", choices=FORMATS)
-    p.set_defaults(func=cmd_history_log)
-
-    p = hist_sub.add_parser("show", help="Recent post history")
-    p.add_argument("--weeks", type=int, default=4)
-    p.set_defaults(func=cmd_history_show)
-
-    p = hist_sub.add_parser("formats", help="Format distribution")
-    p.set_defaults(func=cmd_history_formats)
-
-    # monitor
-    mon_parser = sub.add_parser("monitor", help="FDE post monitoring")
-    mon_sub = mon_parser.add_subparsers(dest="action", required=True)
-
-    p = mon_sub.add_parser("seen", help="List seen post URLs")
-    p.set_defaults(func=cmd_monitor_seen)
-
-    p = mon_sub.add_parser("mark", help="Mark posts as seen")
-    p.add_argument("json_data", help="JSON array of posts: [{url, title, author}]")
-    p.set_defaults(func=cmd_monitor_mark)
-
-    p = mon_sub.add_parser("clear", help="Clear all seen posts")
-    p.set_defaults(func=cmd_monitor_clear)
-
-    args = parser.parse_args()
-    args.func(args)
+    else:
+        print(f"Unknown group: {group}")
+        print("Groups: calendar, feed, history, pillars, viral")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
