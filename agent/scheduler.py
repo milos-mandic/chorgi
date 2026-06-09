@@ -13,6 +13,45 @@ logger = logging.getLogger(__name__)
 SCHEDULES_DIR = Path(__file__).parent.parent / "schedules"
 HEARTBEAT_INTERVAL = 300  # 5 minutes
 
+VALID_TRIGGERS = {"daily", "interval"}
+VALID_TYPES = {"haiku", "sub_agent", "internal"}
+
+
+def validate_schedule(schedule: dict) -> tuple[bool, str]:
+    """Validate a schedule dict before it's written to schedules/.
+
+    Coerces numeric fields in place (Haiku often emits them as strings).
+    Returns (ok, error_message).
+    """
+    if not isinstance(schedule, dict):
+        return False, "Schedule must be a JSON object."
+    if not str(schedule.get("name") or "").strip():
+        return False, "Schedule must have a name."
+    trigger = schedule.get("trigger")
+    if trigger not in VALID_TRIGGERS:
+        return False, f"trigger must be one of: {', '.join(sorted(VALID_TRIGGERS))}."
+    if trigger == "daily":
+        try:
+            at_hour = int(schedule.get("at_hour", 8))
+        except (TypeError, ValueError):
+            return False, "at_hour must be an integer hour 0-23 (UTC)."
+        if not 0 <= at_hour <= 23:
+            return False, "at_hour must be between 0 and 23."
+        schedule["at_hour"] = at_hour
+    else:
+        try:
+            interval = int(schedule.get("interval_minutes", 60))
+        except (TypeError, ValueError):
+            return False, "interval_minutes must be a positive integer."
+        if interval <= 0:
+            return False, "interval_minutes must be a positive integer."
+        schedule["interval_minutes"] = interval
+    if schedule.get("type", "haiku") not in VALID_TYPES:
+        return False, f"type must be one of: {', '.join(sorted(VALID_TYPES))}."
+    if not str(schedule.get("prompt") or "").strip():
+        return False, "Schedule must have a prompt."
+    return True, ""
+
 # Add email skill to path for direct import (stdlib-only, no sub-agent needed)
 _EMAIL_SKILL_DIR = Path(__file__).parent.parent / "skills" / "email"
 if str(_EMAIL_SKILL_DIR) not in sys.path:
@@ -44,6 +83,8 @@ class Scheduler:
         logger.info("Heartbeat running")
         memory = self.orchestrator.memory
 
+        await self._flush_startup_warnings()
+
         await memory.prune_short_term()
         # TODO(M2): remove the short_term→long_term Haiku promotion path
         # entirely. The knowledge layer (people/interactions/inbox_items) is
@@ -61,6 +102,19 @@ class Scheduler:
 
         logger.info("Heartbeat complete")
 
+    async def _flush_startup_warnings(self):
+        """Deliver queued startup problems (e.g. webhook bind failure) to the user."""
+        warnings = self.orchestrator.startup_warnings
+        if not warnings or not self.orchestrator.send_to_user:
+            return
+        pending, warnings[:] = warnings[:], []
+        for message in pending:
+            try:
+                await self.orchestrator.send_to_user(f"⚠️ {message}")
+            except Exception as e:
+                logger.error(f"Failed to deliver startup warning: {e}")
+                warnings.append(message)  # retry next heartbeat
+
     async def _check_schedules(self):
         """Scan schedules/*.json, evaluate triggers, execute due tasks."""
         if not SCHEDULES_DIR.exists():
@@ -75,7 +129,15 @@ class Scheduler:
                 logger.warning(f"Bad schedule file {path.name}: {e}")
                 continue
 
-            if self._is_due(schedule, now):
+            # One malformed file (e.g. at_hour as a string) must not abort
+            # the whole pass and stop every other schedule from firing.
+            try:
+                due = self._is_due(schedule, now)
+            except Exception as e:
+                logger.warning(f"Bad schedule file {path.name}: {e}")
+                continue
+
+            if due:
                 try:
                     await self._execute(schedule)
                     self._mark_ran(path, now)

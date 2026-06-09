@@ -3,11 +3,17 @@
 import asyncio
 import json
 import os
+import random
+import time
 import urllib.error
 import urllib.request
 
 
 API_URL = "https://api.anthropic.com/v1/messages"
+
+MAX_ATTEMPTS = 3
+# Overloaded/rate-limit/server errors are transient; other 4xx are not.
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504, 529}
 
 
 def _call_messages_sync(system: str, messages: list[dict], max_tokens: int, model: str) -> tuple[str, dict]:
@@ -36,15 +42,32 @@ def _call_messages_sync(system: str, messages: list[dict], max_tokens: int, mode
         method="POST",
     )
 
-    try:
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Anthropic API HTTP {e.code}: {e.read().decode()[:500]}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"Anthropic API connection error: {e.reason}") from e
+    last_error = None
+    for attempt in range(MAX_ATTEMPTS):
+        retry_after = None
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read())
+            return data["content"][0]["text"], data.get("usage", {})
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode()[:500]
+            if e.code not in _RETRYABLE_STATUS:
+                raise RuntimeError(f"Anthropic API HTTP {e.code}: {detail}") from e
+            last_error = RuntimeError(f"Anthropic API HTTP {e.code}: {detail}")
+            retry_after = e.headers.get("retry-after") if e.headers else None
+        except urllib.error.URLError as e:
+            last_error = RuntimeError(f"Anthropic API connection error: {e.reason}")
 
-    return data["content"][0]["text"], data.get("usage", {})
+        if attempt < MAX_ATTEMPTS - 1:
+            delay = 2 ** attempt + random.uniform(0, 0.5)
+            if retry_after:
+                try:
+                    delay = max(delay, float(retry_after))
+                except ValueError:
+                    pass
+            time.sleep(delay)
+
+    raise last_error
 
 
 async def call_haiku(system: str, messages: list[dict], max_tokens: int = 512) -> tuple[str, dict]:

@@ -437,16 +437,17 @@ class WebhookServer:
 
                     # Wiki
                     if path == "/api/wiki/recluster" and method == "POST":
-                        server_self._trigger_wiki("recluster", None)
-                        self._send_json(200, {"queued": True})
+                        queued, reason = server_self._trigger_wiki("recluster", None)
+                        self._send_json(200, {"queued": queued, "reason": reason})
                         return
 
                     if path.startswith("/api/wiki/topics/") and method == "POST":
                         rest = path[len("/api/wiki/topics/"):]
                         topic_id, _, action = rest.partition("/")
                         if action == "resynthesize":
-                            server_self._trigger_wiki("resynthesize", topic_id)
-                            self._send_json(200, {"queued": True, "topic_id": topic_id})
+                            queued, reason = server_self._trigger_wiki("resynthesize", topic_id)
+                            self._send_json(200, {"queued": queued, "reason": reason,
+                                                  "topic_id": topic_id})
                             return
 
                     if path.startswith("/api/wiki/topics/") and method == "DELETE":
@@ -504,6 +505,10 @@ class WebhookServer:
             self._server = _ReusableHTTPServer(("0.0.0.0", port), Handler)
         except OSError as e:
             logger.error("Webhook server failed to bind port %d: %s (continuing without webhooks)", port, e)
+            orchestrator.startup_warnings.append(
+                f"Webhook server failed to bind port {port} ({e}). "
+                "Fathom webhooks and the dashboard are DOWN until the bot restarts cleanly."
+            )
             return
 
         self._thread = threading.Thread(
@@ -533,19 +538,25 @@ class WebhookServer:
             )
             future.add_done_callback(_log_future_error)
 
-    def _trigger_wiki(self, action: str, topic_id: str | None) -> None:
-        """Bridge from HTTP thread to async wiki ops. Returns immediately."""
+    def _trigger_wiki(self, action: str, topic_id: str | None) -> tuple[bool, str]:
+        """Bridge from HTTP thread to async wiki ops. Returns (queued, reason)."""
         if not self._loop:
-            return
+            return False, "not ready"
         from agent.knowledge import wiki as wiki_mod
         if action == "recluster":
+            # Pre-check so the dashboard gets immediate cooldown feedback;
+            # run_maintenance re-checks on the event loop either way.
+            ok, reason = wiki_mod.maintenance_available()
+            if not ok:
+                return False, reason
             coro = wiki_mod.run_maintenance()
         elif action == "resynthesize" and topic_id:
             coro = wiki_mod.resynthesize_topic(topic_id)
         else:
-            return
+            return False, "unknown action"
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         future.add_done_callback(_log_future_error)
+        return True, ""
 
 
 def _log_future_error(future):

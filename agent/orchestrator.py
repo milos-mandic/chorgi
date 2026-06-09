@@ -38,6 +38,9 @@ class Orchestrator:
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         self.memory = Memory(PERSONAL_DIR)
         self.send_to_user = None  # Set by main.py after bot is ready
+        # Startup problems (e.g. webhook port bind failure) queue here;
+        # the scheduler heartbeat flushes them to the user via Telegram.
+        self.startup_warnings: list[str] = []
 
         logger.info(f"Discovered skills: {list(self.skills.keys())}")
 
@@ -303,9 +306,11 @@ class Orchestrator:
 
     def _save_schedule(self, schedule: dict) -> tuple:
         """Sanitize and write a schedule JSON to schedules/. Returns (ok, detail)."""
-        name = schedule.get("name", "")
-        if not name:
-            return False, "Schedule must have a name."
+        from agent.scheduler import validate_schedule
+        ok, error = validate_schedule(schedule)
+        if not ok:
+            return False, error
+        name = schedule["name"]
         # Sanitize to safe filename
         safe_name = "".join(c if c.isalnum() or c == "_" else "_" for c in name)
         if not safe_name:

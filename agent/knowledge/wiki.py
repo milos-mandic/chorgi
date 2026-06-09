@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 from agent.api_client import call_haiku
 from agent import bookmarks as bookmarks_mod
@@ -14,6 +15,24 @@ logger = logging.getLogger(__name__)
 _assign_lock = asyncio.Lock()
 _BATCH_SIZE = 80  # bookmarks per Haiku recluster call
 _SUMMARY_TRUNCATE = 240
+
+# Maintenance is expensive (Haiku call per batch + per dirty article) and
+# user-triggerable from the dashboard — guard against double-runs and
+# rapid re-triggers burning credits.
+_MAINTENANCE_COOLDOWN = 600  # seconds
+_maintenance_running = False
+_maintenance_last_done: float | None = None
+_resynth_inflight: set[str] = set()
+
+
+def maintenance_available() -> tuple[bool, str]:
+    """Whether run_maintenance would actually run. Returns (ok, reason)."""
+    if _maintenance_running:
+        return False, "already running"
+    if (_maintenance_last_done is not None
+            and time.monotonic() - _maintenance_last_done < _MAINTENANCE_COOLDOWN):
+        return False, "cooldown"
+    return True, ""
 
 
 def _parse_json(raw: str):
@@ -255,6 +274,17 @@ async def _haiku_cluster_batch(batch: list[dict], existing_titles: list[str]) ->
 
 async def resynthesize_topic(topic_id: str) -> bool:
     """Regenerate the markdown article for a topic. Returns True on success."""
+    if topic_id in _resynth_inflight:
+        logger.info("resynthesize_topic(%s) skipped: already in flight", topic_id)
+        return False
+    _resynth_inflight.add(topic_id)
+    try:
+        return await _resynthesize_topic(topic_id)
+    finally:
+        _resynth_inflight.discard(topic_id)
+
+
+async def _resynthesize_topic(topic_id: str) -> bool:
     topic = models.get_topic(topic_id)
     if not topic:
         return False
@@ -338,7 +368,22 @@ async def drain_dirty(limit: int = 10) -> int:
 
 
 async def run_maintenance() -> dict:
-    """Schedule entrypoint: full recluster then drain dirty articles."""
-    stats = await recluster_all()
-    stats["resynthesized"] = await drain_dirty(limit=10)
-    return stats
+    """Schedule entrypoint: full recluster then drain dirty articles.
+
+    No-ops (with a "skipped" key) while already running or within the
+    cooldown window — both the daily schedule and the dashboard button
+    route through here.
+    """
+    global _maintenance_running, _maintenance_last_done
+    ok, reason = maintenance_available()
+    if not ok:
+        logger.info("run_maintenance skipped: %s", reason)
+        return {"skipped": reason}
+    _maintenance_running = True
+    try:
+        stats = await recluster_all()
+        stats["resynthesized"] = await drain_dirty(limit=10)
+        return stats
+    finally:
+        _maintenance_running = False
+        _maintenance_last_done = time.monotonic()
