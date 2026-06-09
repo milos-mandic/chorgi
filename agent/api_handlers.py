@@ -24,7 +24,12 @@ _local_chat = None
 
 # Single lock for all JSON mutations (tasks + bookmarks).
 # These files are tiny; a coarse lock keeps things simple and safe.
+# skills/_shared.file_lock adds cross-process exclusion on top (skill CLIs
+# running as sub-agent subprocesses mutate the same files).
 _data_lock = threading.Lock()
+
+sys.path.insert(0, str(BASE_DIR / "skills"))
+import _shared  # noqa: E402
 
 
 def _get_task_cli():
@@ -245,7 +250,7 @@ def _create_task(body: dict) -> dict:
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     scheduled_at = (body.get("scheduled_at") or "").strip() or None
-    with _data_lock:
+    with _data_lock, _shared.file_lock(tc.DATA_FILE):
         tasks = tc.load_tasks()
         task = {
             "id": tc.make_id(),
@@ -279,7 +284,7 @@ _TASK_FIELDS = {"title", "notes", "priority", "estimated_minutes",
 
 def _update_task(task_id: str, body: dict) -> dict | None:
     tc = _get_task_cli()
-    with _data_lock:
+    with _data_lock, _shared.file_lock(tc.DATA_FILE):
         tasks = tc.load_tasks()
         task = tc.find_task(tasks, task_id)
         if task is None:
@@ -328,7 +333,7 @@ def _update_task(task_id: str, body: dict) -> dict | None:
 
 def _delete_task(task_id: str) -> bool:
     tc = _get_task_cli()
-    with _data_lock:
+    with _data_lock, _shared.file_lock(tc.DATA_FILE):
         tasks = tc.load_tasks()
         task = tc.find_task(tasks, task_id)
         if task is None:
@@ -348,7 +353,7 @@ def _create_bookmark(body: dict) -> dict:
     tags = body.get("tags") or []
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
-    with _data_lock:
+    with _data_lock, _shared.file_lock(bc.DATA_FILE):
         bookmarks = bc.load_bookmarks()
         for b in bookmarks:
             if b["url"] == url:
@@ -367,7 +372,7 @@ def _create_bookmark(body: dict) -> dict:
 
 def _delete_bookmark(url: str) -> bool:
     bc = _get_bookmarks_cli()
-    with _data_lock:
+    with _data_lock, _shared.file_lock(bc.DATA_FILE):
         bookmarks = bc.load_bookmarks()
         before = len(bookmarks)
         bookmarks = [b for b in bookmarks if b["url"] != url]

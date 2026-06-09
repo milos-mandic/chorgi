@@ -10,6 +10,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Deliberate cross-skill dependency: scheduling commands shell out to the
+# calendar skill's CLI and parse its JSON stdout. If calendar_cli.py moves
+# or its output contract changes, schedule-batch and --scheduled-at break.
 CALENDAR_CLI = Path(__file__).resolve().parent.parent / "calendar" / "calendar_cli.py"
 # Calendar CLI needs google-api-python-client etc. — only the project venv has them.
 # Falls back to sys.executable if the venv binary is missing.
@@ -18,16 +21,16 @@ PYTHON_FOR_CALENDAR = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 DATA_FILE = Path(__file__).parent / "workspace" / "tasks.json"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _shared  # noqa: E402
+
 
 def load_tasks() -> list[dict]:
-    if DATA_FILE.exists():
-        return json.loads(DATA_FILE.read_text())
-    return []
+    return _shared.load_json(DATA_FILE, [])
 
 
 def save_tasks(tasks: list[dict]) -> None:
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DATA_FILE.write_text(json.dumps(tasks, indent=2))
+    _shared.save_json(DATA_FILE, tasks)
 
 
 def make_id() -> str:
@@ -577,7 +580,10 @@ def main():
         "clear-done": cmd_clear_done,
         "schedule-batch": cmd_schedule_batch,
     }
-    cmds[args.command](args)
+    # Cross-process lock for the whole command: concurrent sub-agents (or
+    # the bot's dashboard API) can't interleave a read-modify-write.
+    with _shared.file_lock(DATA_FILE):
+        cmds[args.command](args)
 
 
 if __name__ == "__main__":

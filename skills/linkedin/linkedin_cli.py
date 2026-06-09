@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """LinkedIn Growth Management CLI — state management for content planning, drafting, and tracking."""
 
+import argparse
 import json
 import sys
 from datetime import datetime, timezone, timedelta
@@ -84,15 +85,16 @@ DEFAULT_PILLARS = {
 }
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _shared  # noqa: E402
+
+
 def _load_json(path, default):
-    if path.exists():
-        return json.loads(path.read_text())
-    return default
+    return _shared.load_json(path, default)
 
 
 def _save_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    _shared.save_json(path, data)
 
 
 def _now_iso():
@@ -531,90 +533,120 @@ def viral_patterns():
 
 # ── CLI Router ────────────────────────────────────────────────────────
 
-def main():
-    args = sys.argv[1:]
-    if len(args) < 2:
-        print("Usage: python3 linkedin_cli.py <group> <command> [args]")
-        print("Groups: calendar, feed, history, pillars, viral")
-        sys.exit(1)
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="linkedin_cli.py",
+        description="LinkedIn growth management — calendar, feed, history, pillars, viral",
+    )
+    groups = parser.add_subparsers(dest="group", required=True)
 
-    group, cmd = args[0], args[1]
-    rest = args[2:]
+    cal = groups.add_parser("calendar", help="Weekly content calendar")
+    cal_sub = cal.add_subparsers(dest="command", required=True)
+    cal_sub.add_parser("show", help="Show current week plan")
+    cal_sub.add_parser("context", help="Full planning context")
+    p = cal_sub.add_parser("set", help="Save a full week calendar")
+    p.add_argument("json_str", metavar="json")
+    p = cal_sub.add_parser("update", help="Update a day's status")
+    p.add_argument("date", help="Date, weekday name, or 'today'")
+    p.add_argument("status_pos", nargs="?", default=None, metavar="status",
+                   help="planned|drafted|posted|skipped (or use --status)")
+    p.add_argument("--status", default=None,
+                   help="planned|drafted|posted|skipped")
+    p = cal_sub.add_parser("get", help="Get a single day entry")
+    p.add_argument("date_or_day", help="Date, weekday name, or 'today'")
 
+    feed = groups.add_parser("feed", help="Content idea feed")
+    feed_sub = feed.add_subparsers(dest="command", required=True)
+    p = feed_sub.add_parser("list", help="List feed items")
+    p.add_argument("--pillar", default=None)
+    p.add_argument("--unused", action="store_true")
+    p = feed_sub.add_parser("add", help="Add a feed item")
+    p.add_argument("json_str", metavar="json")
+    p = feed_sub.add_parser("use", help="Mark item used")
+    p.add_argument("item_id", type=int)
+    p = feed_sub.add_parser("remove", help="Remove an item")
+    p.add_argument("item_id", type=int)
+
+    hist = groups.add_parser("history", help="Post history")
+    hist_sub = hist.add_subparsers(dest="command", required=True)
+    p = hist_sub.add_parser("log", help="Log a published post")
+    p.add_argument("json_str", metavar="json")
+    p = hist_sub.add_parser("show", help="Recent history")
+    p.add_argument("--weeks", type=int, default=4)
+    hist_sub.add_parser("formats", help="Format distribution")
+    hist_sub.add_parser("pillars", help="Pillar distribution")
+
+    pil = groups.add_parser("pillars", help="Content pillars")
+    pil_sub = pil.add_subparsers(dest="command", required=True)
+    pil_sub.add_parser("show", help="Show pillar definitions")
+    pil_sub.add_parser("rotation", help="Least-recently-used first")
+
+    vir = groups.add_parser("viral", help="Viral post log")
+    vir_sub = vir.add_subparsers(dest="command", required=True)
+    p = vir_sub.add_parser("log", help="Log a viral post")
+    p.add_argument("json_str", metavar="json")
+    p = vir_sub.add_parser("show", help="Show logged viral posts")
+    p.add_argument("--last", type=int, default=10)
+    vir_sub.add_parser("patterns", help="Analyze viral patterns")
+
+    return parser
+
+
+def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    group, cmd = args.group, args.command
     if group == "calendar":
         if cmd == "show":
             calendar_show()
         elif cmd == "context":
             calendar_context()
         elif cmd == "set":
-            calendar_set(rest[0])
+            calendar_set(args.json_str)
         elif cmd == "update":
-            date = rest[0]
-            status = rest[rest.index("--status") + 1] if "--status" in rest else rest[1]
-            calendar_update(date, status)
+            status = args.status or args.status_pos
+            if not status:
+                parser.error("calendar update requires a status (--status <value>)")
+            calendar_update(args.date, status)
         elif cmd == "get":
-            calendar_get(rest[0])
-        else:
-            print(f"Unknown calendar command: {cmd}")
-
+            calendar_get(args.date_or_day)
     elif group == "feed":
         if cmd == "list":
-            pillar = None
-            unused = False
-            if "--pillar" in rest:
-                pillar = rest[rest.index("--pillar") + 1]
-            if "--unused" in rest:
-                unused = True
-            feed_list(pillar=pillar, unused_only=unused)
+            feed_list(pillar=args.pillar, unused_only=args.unused)
         elif cmd == "add":
-            feed_add(rest[0])
+            feed_add(args.json_str)
         elif cmd == "use":
-            feed_use(rest[0])
+            feed_use(args.item_id)
         elif cmd == "remove":
-            feed_remove(rest[0])
-        else:
-            print(f"Unknown feed command: {cmd}")
-
+            feed_remove(args.item_id)
     elif group == "history":
         if cmd == "log":
-            history_log(rest[0])
+            history_log(args.json_str)
         elif cmd == "show":
-            weeks = 4
-            if "--weeks" in rest:
-                weeks = int(rest[rest.index("--weeks") + 1])
-            history_show(weeks)
+            history_show(args.weeks)
         elif cmd == "formats":
             history_formats()
         elif cmd == "pillars":
             history_pillars()
-        else:
-            print(f"Unknown history command: {cmd}")
-
     elif group == "pillars":
         if cmd == "show":
             pillars_show()
         elif cmd == "rotation":
             pillars_rotation()
-        else:
-            print(f"Unknown pillars command: {cmd}")
-
     elif group == "viral":
         if cmd == "log":
-            viral_log(rest[0])
+            viral_log(args.json_str)
         elif cmd == "show":
-            last_n = 10
-            if "--last" in rest:
-                last_n = int(rest[rest.index("--last") + 1])
-            viral_show(last_n)
+            viral_show(args.last)
         elif cmd == "patterns":
             viral_patterns()
-        else:
-            print(f"Unknown viral command: {cmd}")
 
-    else:
-        print(f"Unknown group: {group}")
-        print("Groups: calendar, feed, history, pillars, viral")
-        sys.exit(1)
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    # One cross-process lock for the whole workspace: every command may touch
+    # several of the JSON files, and concurrent sub-agents must not interleave.
+    with _shared.file_lock(WORKSPACE / "linkedin_data"):
+        _dispatch(parser, args)
 
 
 if __name__ == "__main__":

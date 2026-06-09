@@ -19,6 +19,9 @@ _EMAIL_SKILL_DIR = SKILL_DIR.parent / "email"
 if str(_EMAIL_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(_EMAIL_SKILL_DIR))
 
+sys.path.insert(0, str(SKILL_DIR.parent))
+import _shared  # noqa: E402
+
 
 def _load_data():
     """Load topics.json."""
@@ -27,20 +30,18 @@ def _load_data():
 
 def _save_data(data):
     """Save topics.json."""
-    TOPICS_FILE.write_text(json.dumps(data, indent=2) + "\n")
+    _shared.save_json(TOPICS_FILE, data)
 
 
 def _load_sent_history():
     """Load sent article URLs from history file."""
-    if SENT_HISTORY.exists():
-        return json.loads(SENT_HISTORY.read_text())
-    return {"sent_urls": [], "last_sent": None}
+    return _shared.load_json(SENT_HISTORY, {"sent_urls": [], "last_sent": None})
 
 
 def _save_sent_history(history):
     """Save sent history. Keep only last 500 URLs to avoid unbounded growth."""
     history["sent_urls"] = history["sent_urls"][-500:]
-    SENT_HISTORY.write_text(json.dumps(history, indent=2) + "\n")
+    _shared.save_json(SENT_HISTORY, history)
 
 
 # --- Topic commands ---
@@ -109,13 +110,33 @@ def cmd_sources_remove(args):
 # --- Send briefing ---
 
 def _is_within_24h(date_str):
-    """Check if a date string (e.g. 'Mar 28, 2026') is within the last 24 hours."""
-    try:
-        article_date = datetime.strptime(date_str.strip(), "%b %d, %Y")
-        cutoff = datetime.now() - timedelta(hours=24)
-        return article_date >= cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
-    except (ValueError, AttributeError):
-        return False
+    """Check if a date string is within the last 24 hours.
+
+    Accepts 'Mar 28, 2026', 'March 28, 2026', ISO dates, and the 'Recent' /
+    'Today' placeholders the briefing agent uses when the exact date is
+    unknown (those count as fresh — the agent only includes fresh articles).
+    Unparseable dates are dropped fail-closed, but loudly.
+    """
+    raw = (date_str or "").strip()
+    if raw.lower() in ("recent", "today"):
+        return True
+    article_date = None
+    for fmt in ("%b %d, %Y", "%B %d, %Y", "%Y-%m-%d"):
+        try:
+            article_date = datetime.strptime(raw, fmt)
+            break
+        except ValueError:
+            continue
+    if article_date is None:
+        try:
+            article_date = datetime.fromisoformat(raw)
+            if article_date.tzinfo is not None:
+                article_date = article_date.replace(tzinfo=None)
+        except ValueError:
+            print(f"Warning: dropping article with unparseable date {raw!r}", file=sys.stderr)
+            return False
+    cutoff = datetime.now() - timedelta(hours=24)
+    return article_date >= cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def cmd_send_briefing(args):
@@ -260,7 +281,9 @@ def main():
     p.set_defaults(func=cmd_send_briefing)
 
     args = parser.parse_args()
-    args.func(args)
+    # Cross-process lock covering topics.json + sent_history.json mutations.
+    with _shared.file_lock(TOPICS_FILE):
+        args.func(args)
 
 
 if __name__ == "__main__":

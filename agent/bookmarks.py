@@ -4,6 +4,7 @@ import html.parser
 import json
 import logging
 import re
+import sys
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -12,6 +13,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 BOOKMARKS_FILE = Path(__file__).parent.parent / "skills" / "bookmarks" / "workspace" / "bookmarks.json"
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "skills"))
+import _shared  # noqa: E402
 
 # Match URLs starting with http(s)://
 _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
@@ -84,12 +88,7 @@ def fetch_page_meta(url: str) -> dict:
 
 def load_bookmarks() -> list[dict]:
     """Return all bookmarks as a flat list (newest first by convention)."""
-    if not BOOKMARKS_FILE.exists():
-        return []
-    try:
-        data = json.loads(BOOKMARKS_FILE.read_text())
-    except (json.JSONDecodeError, OSError):
-        return []
+    data = _shared.load_json(BOOKMARKS_FILE, [], tolerant=True)
     # Tolerate the legacy {"bookmarks": [...]} shape during transition.
     if isinstance(data, dict) and isinstance(data.get("bookmarks"), list):
         return data["bookmarks"]
@@ -99,8 +98,7 @@ def load_bookmarks() -> list[dict]:
 
 
 def save_bookmarks(bookmarks: list[dict]) -> None:
-    BOOKMARKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BOOKMARKS_FILE.write_text(json.dumps(bookmarks, indent=2) + "\n")
+    _shared.save_json(BOOKMARKS_FILE, bookmarks)
 
 
 def add_bookmark(
@@ -112,30 +110,31 @@ def add_bookmark(
     tags: list[str] | None = None,
 ) -> int:
     """Insert or merge a bookmark. Returns count of unsent bookmarks."""
-    bookmarks = load_bookmarks()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    for b in bookmarks:
-        if b["url"] == url:
-            if title:
-                b["title"] = title
-            if summary:
-                b["summary"] = summary
-            if notes:
-                b["notes"] = notes
-            if tags:
-                b["tags"] = tags
-            break
-    else:
-        bookmarks.insert(0, {
-            "url": url,
-            "title": title,
-            "summary": summary,
-            "notes": notes,
-            "tags": tags or [],
-            "saved_at": now,
-            "emailed": False,
-        })
-    save_bookmarks(bookmarks)
+    with _shared.file_lock(BOOKMARKS_FILE):
+        bookmarks = load_bookmarks()
+        for b in bookmarks:
+            if b["url"] == url:
+                if title:
+                    b["title"] = title
+                if summary:
+                    b["summary"] = summary
+                if notes:
+                    b["notes"] = notes
+                if tags:
+                    b["tags"] = tags
+                break
+        else:
+            bookmarks.insert(0, {
+                "url": url,
+                "title": title,
+                "summary": summary,
+                "notes": notes,
+                "tags": tags or [],
+                "saved_at": now,
+                "emailed": False,
+            })
+        save_bookmarks(bookmarks)
     return sum(1 for b in bookmarks if not b.get("emailed"))
 
 
@@ -146,9 +145,10 @@ def get_unsent_bookmarks() -> list[dict]:
 
 def mark_emailed(urls: list[str]):
     """Set emailed = true for given URLs."""
-    bookmarks = load_bookmarks()
     url_set = set(urls)
-    for b in bookmarks:
-        if b["url"] in url_set:
-            b["emailed"] = True
-    save_bookmarks(bookmarks)
+    with _shared.file_lock(BOOKMARKS_FILE):
+        bookmarks = load_bookmarks()
+        for b in bookmarks:
+            if b["url"] in url_set:
+                b["emailed"] = True
+        save_bookmarks(bookmarks)

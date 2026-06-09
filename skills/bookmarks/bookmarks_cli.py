@@ -10,22 +10,19 @@ from pathlib import Path
 
 DATA_FILE = Path(__file__).parent / "workspace" / "bookmarks.json"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _shared  # noqa: E402
+
 
 def load_bookmarks() -> list[dict]:
-    if not DATA_FILE.exists():
-        return []
-    try:
-        data = json.loads(DATA_FILE.read_text())
-    except json.JSONDecodeError:
-        return []
+    data = _shared.load_json(DATA_FILE, [], tolerant=True)
     if isinstance(data, dict) and isinstance(data.get("bookmarks"), list):
         return data["bookmarks"]
     return data if isinstance(data, list) else []
 
 
 def save_bookmarks(bookmarks: list[dict]) -> None:
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DATA_FILE.write_text(json.dumps(bookmarks, indent=2) + "\n")
+    _shared.save_json(DATA_FILE, bookmarks)
 
 
 def cmd_add(args):
@@ -159,7 +156,10 @@ def main():
     remove_p.add_argument("url", help="URL to remove")
 
     args = parser.parse_args()
-    {"add": cmd_add, "list": cmd_list, "search": cmd_search, "remove": cmd_remove}[args.command](args)
+    # Cross-process lock: concurrent sub-agents and the bot's dashboard API
+    # mutate the same file.
+    with _shared.file_lock(DATA_FILE):
+        {"add": cmd_add, "list": cmd_list, "search": cmd_search, "remove": cmd_remove}[args.command](args)
 
 
 if __name__ == "__main__":
