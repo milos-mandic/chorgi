@@ -123,7 +123,15 @@ class WebhookServer:
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format, *args):
-                logger.info("Webhook HTTP: " + format, *args)
+                msg = format % args
+                # The dashboard polls GET endpoints every few seconds and
+                # pulls static assets on every load — DEBUG, not INFO, or the
+                # log fills with thousands of identical lines per day.
+                # Mutations (POST/PATCH/DELETE) stay at INFO.
+                if '"GET /' in msg:
+                    logger.debug("Webhook HTTP: %s", msg)
+                else:
+                    logger.info("Webhook HTTP: %s", msg)
 
             # ---- helpers ----------------------------------------------------
             def _send_json(self, status: int, payload):
@@ -206,13 +214,13 @@ class WebhookServer:
 
             def do_POST(self):
                 path = self.path.split("?", 1)[0]
-                logger.info("Webhook POST received: path=%s", path)
 
                 # Webhook secret routes (Fathom)
                 parts = _parse_secret_path(path, secret)
                 if parts is not None:
                     _sec, route = parts
                     if route == "fathom":
+                        logger.info("Fathom webhook received")
                         body = self._read_body()
                         headers = {k.lower(): v for k, v in self.headers.items()}
                         result = _handle_fathom(headers, body, server_self)

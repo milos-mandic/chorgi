@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import logging.handlers
 import os
 import re
 import sys
@@ -30,10 +31,34 @@ from agent.onboarding import (
     PERSONAL_DIR,
 )
 
-logging.basicConfig(
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    level=logging.INFO,
-)
+LOG_FILE = Path.home() / ".chorgi_bot.log"
+
+
+def _setup_logging():
+    """Rotating file log + console echo only for foreground (TTY) runs.
+
+    Under launchd, stdout/stderr go to a separate small stderr file (see
+    launchd/com.chorgi.bot.plist) that only catches hard-crash tracebacks;
+    all normal logging rotates here so the file can't grow unbounded.
+    """
+    handlers = [
+        logging.handlers.RotatingFileHandler(
+            LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        )
+    ]
+    if sys.stderr.isatty():
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        level=logging.INFO,
+        handlers=handlers,
+    )
+    # httpx logs every Telegram getUpdates poll at INFO (~8k lines/day) and
+    # includes the bot token in the URL — keep it to warnings only.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+_setup_logging()
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent.parent

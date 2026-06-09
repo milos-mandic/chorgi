@@ -11,7 +11,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-BOOKMARKS_FILE = Path(__file__).parent.parent / "skills" / "bookmarks" / "bookmarks.json"
+BOOKMARKS_FILE = Path(__file__).parent.parent / "skills" / "bookmarks" / "workspace" / "bookmarks.json"
 
 # Match URLs starting with http(s)://
 _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")

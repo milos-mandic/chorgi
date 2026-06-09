@@ -26,11 +26,12 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- Log stdout + stderr to same file -->
+  <!-- Normal logging rotates in-process to ~/.chorgi_bot.log; this file
+       only catches hard-crash tracebacks and stray prints, so it stays small -->
   <key>StandardOutPath</key>
-  <string>/Users/chorgi/.chorgi_bot.log</string>
+  <string>/Users/chorgi/.chorgi_bot.stderr.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/chorgi/.chorgi_bot.log</string>
+  <string>/Users/chorgi/.chorgi_bot.stderr.log</string>
 
   <key>EnvironmentVariables</key>
   <dict>

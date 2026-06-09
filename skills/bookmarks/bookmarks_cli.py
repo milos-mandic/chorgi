@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI for managing bookmarks. Data stored in skills/bookmarks/bookmarks.json
+"""CLI for managing bookmarks. Data stored in skills/bookmarks/workspace/bookmarks.json
 (shared with the agent's Haiku fast-path and the web UI)."""
 
 import argparse
@@ -8,7 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_FILE = Path(__file__).parent / "bookmarks.json"
+DATA_FILE = Path(__file__).parent / "workspace" / "bookmarks.json"
 
 
 def load_bookmarks() -> list[dict]:
