@@ -1,5 +1,8 @@
 """Webhook server — receives external notifications and serves the dashboard UI.
 
+HTTP plumbing, static serving, SSE chat streaming, and the Fathom webhook live
+here; the JSON API route handlers live in agent/api_handlers.py.
+
 Routes:
   Webhook (secret-prefixed, machine-to-machine):
     GET  /<WEBHOOK_SECRET>/health        → liveness
@@ -36,9 +39,10 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+
+from agent import api_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +50,9 @@ MAX_BODY_SIZE = 1024 * 1024  # 1MB
 BASE_DIR = Path(__file__).parent.parent
 UI_DIR = Path(__file__).parent / "ui"
 
-# Lazy-loaded skill modules
+# Lazy-loaded skill module (Fathom transcripts only; the API-facing loaders
+# live in api_handlers)
 _fathom_client = None
-_task_cli = None
-_bookmarks_cli = None
-_local_chat = None
-
-# Single lock for all JSON mutations (tasks + bookmarks).
-# These files are tiny; a coarse lock keeps things simple and safe.
-_data_lock = threading.Lock()
 
 
 def _get_fathom_client():
@@ -64,32 +62,6 @@ def _get_fathom_client():
         import fathom_client as fc
         _fathom_client = fc
     return _fathom_client
-
-
-def _get_task_cli():
-    global _task_cli
-    if _task_cli is None:
-        sys.path.insert(0, str(BASE_DIR / "skills" / "tasks"))
-        import task_cli as tc
-        _task_cli = tc
-    return _task_cli
-
-
-def _get_bookmarks_cli():
-    global _bookmarks_cli
-    if _bookmarks_cli is None:
-        sys.path.insert(0, str(BASE_DIR / "skills" / "bookmarks"))
-        import bookmarks_cli as bc
-        _bookmarks_cli = bc
-    return _bookmarks_cli
-
-
-def _get_local_chat():
-    global _local_chat
-    if _local_chat is None:
-        from agent import local_chat as lc
-        _local_chat = lc
-    return _local_chat
 
 
 class _ReusableHTTPServer(ThreadingHTTPServer):
@@ -259,7 +231,7 @@ class WebhookServer:
                 if not content:
                     self._send_json(400, {"error": "content required"}); return
 
-                lc = _get_local_chat()
+                lc = api_handlers.get_local_chat()
                 conv = lc.append_message(cid, "user", content)
                 messages = [{"role": m["role"], "content": m["content"]}
                             for m in conv.get("messages", [])]
@@ -323,169 +295,15 @@ class WebhookServer:
                 self.end_headers()
                 self.wfile.write(data)
 
-            # ---- API GET ----------------------------------------------------
+            # ---- API dispatch (handlers live in agent/api_handlers.py) ------
             def _api_get(self, path: str):
-                try:
-                    if path == "/api/state":
-                        self._send_json(200, _build_state())
-                    elif path == "/api/tasks":
-                        tc = _get_task_cli()
-                        self._send_json(200, {"tasks": tc.load_tasks()})
-                    elif path == "/api/bookmarks":
-                        bc = _get_bookmarks_cli()
-                        self._send_json(200, {"bookmarks": bc.load_bookmarks()})
-                    elif path == "/api/linkedin/calendar":
-                        self._send_json(200, _load_linkedin_calendar())
-                    elif path == "/api/people":
-                        from agent.knowledge import models as km
-                        self._send_json(200, {"people": km.list_people()})
-                    elif path.startswith("/api/people/"):
-                        pid = path[len("/api/people/"):]
-                        from agent.knowledge import models as km
-                        person = km.get_person(pid)
-                        if not person:
-                            self._send_json(404, {"error": "person not found"}); return
-                        person["interactions"] = km.person_interactions(pid)
-                        self._send_json(200, person)
-                    elif path == "/api/inbox":
-                        from agent.knowledge import models as km
-                        self._send_json(200, {"inbox": km.list_inbox()})
-                    elif path == "/api/wiki/topics":
-                        from agent.knowledge import models as km
-                        self._send_json(200, {"topics": km.list_topics()})
-                    elif path.startswith("/api/wiki/topics/"):
-                        ident = path[len("/api/wiki/topics/"):]
-                        topic = _get_wiki_topic(ident)
-                        if topic is None:
-                            self._send_json(404, {"error": "topic not found"}); return
-                        self._send_json(200, topic)
-                    elif path == "/api/chat/config":
-                        self._send_json(200, _get_local_chat().config())
-                    elif path == "/api/chat/conversations":
-                        lc = _get_local_chat()
-                        self._send_json(200, {"conversations": lc.list_conversations()})
-                    elif path.startswith("/api/chat/conversations/"):
-                        cid = path[len("/api/chat/conversations/"):]
-                        conv = _get_local_chat().get_conversation(cid)
-                        if conv is None:
-                            self._send_json(404, {"error": "conversation not found"}); return
-                        self._send_json(200, conv)
-                    else:
-                        self._send_json(404, {"error": "not found"})
-                except Exception as e:
-                    logger.error("API GET %s failed: %s", path, e, exc_info=True)
-                    self._send_json(500, {"error": str(e)})
+                status, payload = api_handlers.api_get(path)
+                self._send_json(status, payload)
 
-            # ---- API write --------------------------------------------------
             def _api_write(self, path: str, method: str):
-                try:
-                    # Tasks
-                    if path == "/api/tasks" and method == "POST":
-                        body = self._read_json()
-                        if body is None:
-                            self._send_json(400, {"error": "bad json"}); return
-                        self._send_json(200, _create_task(body))
-                        return
-
-                    if path.startswith("/api/tasks/"):
-                        task_id = path[len("/api/tasks/"):]
-                        if method == "PATCH":
-                            body = self._read_json()
-                            if body is None:
-                                self._send_json(400, {"error": "bad json"}); return
-                            updated = _update_task(task_id, body)
-                            if updated is None:
-                                self._send_json(404, {"error": "task not found"}); return
-                            self._send_json(200, updated)
-                            return
-                        if method == "DELETE":
-                            ok = _delete_task(task_id)
-                            self._send_json(200 if ok else 404, {"deleted": ok})
-                            return
-
-                    # Bookmarks
-                    if path == "/api/bookmarks" and method == "POST":
-                        body = self._read_json()
-                        if body is None:
-                            self._send_json(400, {"error": "bad json"}); return
-                        self._send_json(200, _create_bookmark(body))
-                        return
-
-                    if path == "/api/bookmarks" and method == "DELETE":
-                        body = self._read_json()
-                        if body is None or not body.get("url"):
-                            self._send_json(400, {"error": "url required"}); return
-                        ok = _delete_bookmark(body["url"])
-                        self._send_json(200 if ok else 404, {"deleted": ok})
-                        return
-
-                    # Inbox accept / reject
-                    if path.startswith("/api/inbox/") and method == "POST":
-                        rest = path[len("/api/inbox/"):]
-                        item_id, _, action = rest.partition("/")
-                        from agent.knowledge import models as km
-                        if action == "accept":
-                            res = km.accept_inbox_item(item_id)
-                            if res is None:
-                                self._send_json(404, {"error": "item not pending or missing"}); return
-                            self._send_json(200, res)
-                            return
-                        if action == "reject":
-                            ok = km.reject_inbox_item(item_id)
-                            self._send_json(200 if ok else 404, {"rejected": ok})
-                            return
-
-                    # Wiki
-                    if path == "/api/wiki/recluster" and method == "POST":
-                        queued, reason = server_self._trigger_wiki("recluster", None)
-                        self._send_json(200, {"queued": queued, "reason": reason})
-                        return
-
-                    if path.startswith("/api/wiki/topics/") and method == "POST":
-                        rest = path[len("/api/wiki/topics/"):]
-                        topic_id, _, action = rest.partition("/")
-                        if action == "resynthesize":
-                            queued, reason = server_self._trigger_wiki("resynthesize", topic_id)
-                            self._send_json(200, {"queued": queued, "reason": reason,
-                                                  "topic_id": topic_id})
-                            return
-
-                    if path.startswith("/api/wiki/topics/") and method == "DELETE":
-                        topic_id = path[len("/api/wiki/topics/"):]
-                        from agent.knowledge import models as km
-                        ok = km.delete_topic(topic_id)
-                        self._send_json(200 if ok else 404, {"deleted": ok})
-                        return
-
-                    # Local chat — create / delete conversations.
-                    # (The streaming message send is handled in do_POST.)
-                    if path == "/api/chat/conversations" and method == "POST":
-                        self._send_json(200, _get_local_chat().create_conversation())
-                        return
-
-                    if path.startswith("/api/chat/conversations/") and method == "DELETE":
-                        cid = path[len("/api/chat/conversations/"):]
-                        ok = _get_local_chat().delete_conversation(cid)
-                        self._send_json(200 if ok else 404, {"deleted": ok})
-                        return
-
-                    # Trigger subagent
-                    if path == "/api/trigger" and method == "POST":
-                        body = self._read_json()
-                        if body is None:
-                            self._send_json(400, {"error": "bad json"}); return
-                        skill = body.get("skill")
-                        task = body.get("task")
-                        if not skill or not task:
-                            self._send_json(400, {"error": "skill and task required"}); return
-                        server_self._trigger_skill(skill, task)
-                        self._send_json(200, {"status": "queued", "skill": skill})
-                        return
-
-                    self._send_json(404, {"error": "not found"})
-                except Exception as e:
-                    logger.error("API %s %s failed: %s", method, path, e, exc_info=True)
-                    self._send_json(500, {"error": str(e)})
+                body = self._read_json()
+                status, payload = api_handlers.api_write(path, method, body, server_self)
+                self._send_json(status, payload)
 
         # Kill any stale process holding the port (e.g. previous bot instance)
         result = subprocess.run(["/usr/sbin/lsof", "-ti", f":{port}"], capture_output=True, text=True)
@@ -573,208 +391,6 @@ def _parse_secret_path(path: str, secret: str) -> tuple[str, str] | None:
     if len(parts) != 2 or parts[0] != secret:
         return None
     return parts[0], parts[1]
-
-
-# ---------------------------------------------------------------------------
-# State + mutation helpers (importable so the UI shares the CLI write path)
-# ---------------------------------------------------------------------------
-
-def _build_state() -> dict:
-    tc = _get_task_cli()
-    bc = _get_bookmarks_cli()
-    with _data_lock:
-        tasks = tc.load_tasks()
-        bookmarks = bc.load_bookmarks()
-    people = []
-    inbox = []
-    try:
-        from agent.knowledge import models as km
-        people = km.list_people()
-        inbox = km.list_inbox()
-    except Exception as e:
-        logger.warning("Knowledge state unavailable: %s", e)
-    return {
-        "tasks": tasks,
-        "bookmarks": bookmarks,
-        "linkedin_week": _load_linkedin_calendar(),
-        "people": people,
-        "inbox": inbox,
-        "now": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def _create_task(body: dict) -> dict:
-    tc = _get_task_cli()
-    title = (body.get("title") or "").strip()
-    if not title:
-        return {"error": "title required"}
-    tags = body.get("tags") or []
-    if isinstance(tags, str):
-        tags = [t.strip() for t in tags.split(",") if t.strip()]
-    scheduled_at = (body.get("scheduled_at") or "").strip() or None
-    with _data_lock:
-        tasks = tc.load_tasks()
-        task = {
-            "id": tc.make_id(),
-            "title": title,
-            "notes": body.get("notes", "") or "",
-            "priority": body.get("priority", "medium") or "medium",
-            "estimated_minutes": body.get("estimated_minutes"),
-            "deadline": body.get("deadline"),
-            "tags": tags,
-            "status": body.get("status", "pending") or "pending",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "carry_count": 0,
-        }
-        if scheduled_at:
-            result = tc.create_calendar_event_for_task(task, scheduled_at)
-            if result.get("ok"):
-                task["status"] = "scheduled"
-                task["scheduled_at"] = result["scheduled_at"]
-                task["calendar_event_id"] = result["event_id"]
-            else:
-                task["_calendar_warning"] = result.get("error", "calendar create failed")
-        tasks.insert(0, task)
-        tc.save_tasks(tasks)
-    return task
-
-
-_TASK_FIELDS = {"title", "notes", "priority", "estimated_minutes",
-                "deadline", "tags", "status", "carry_count",
-                "scheduled_at", "calendar_event_id"}
-
-
-def _update_task(task_id: str, body: dict) -> dict | None:
-    tc = _get_task_cli()
-    with _data_lock:
-        tasks = tc.load_tasks()
-        task = tc.find_task(tasks, task_id)
-        if task is None:
-            return None
-
-        new_scheduled = body.get("scheduled_at") if "scheduled_at" in body else "__unset__"
-        if new_scheduled != "__unset__":
-            new_scheduled = (new_scheduled or "").strip() or None
-            old_scheduled = task.get("scheduled_at")
-            old_event_id = task.get("calendar_event_id")
-            if new_scheduled and new_scheduled != old_scheduled:
-                if old_event_id:
-                    # Apply pending edits (title/notes/estimate) before updating the event
-                    for k, v in body.items():
-                        if k in _TASK_FIELDS and k not in ("scheduled_at", "calendar_event_id", "status"):
-                            if k == "tags" and isinstance(v, str):
-                                v = [t.strip() for t in v.split(",") if t.strip()]
-                            task[k] = v
-                    result = tc.update_calendar_event_for_task(task, new_scheduled)
-                    if result.get("ok"):
-                        task["scheduled_at"] = result["scheduled_at"]
-                        task["status"] = "scheduled"
-                else:
-                    result = tc.create_calendar_event_for_task(task, new_scheduled)
-                    if result.get("ok"):
-                        task["scheduled_at"] = result["scheduled_at"]
-                        task["calendar_event_id"] = result["event_id"]
-                        task["status"] = "scheduled"
-            elif not new_scheduled and old_event_id:
-                tc.delete_calendar_event_for_task(task)
-                task.pop("calendar_event_id", None)
-                task.pop("scheduled_at", None)
-                if task.get("status") == "scheduled":
-                    task["status"] = "pending"
-
-        for k, v in body.items():
-            if k in _TASK_FIELDS and k not in ("scheduled_at", "calendar_event_id"):
-                if k == "tags" and isinstance(v, str):
-                    v = [t.strip() for t in v.split(",") if t.strip()]
-                task[k] = v
-        if body.get("status") == "done" and "completed_at" not in task:
-            task["completed_at"] = datetime.now(timezone.utc).isoformat()
-        tc.save_tasks(tasks)
-    return task
-
-
-def _delete_task(task_id: str) -> bool:
-    tc = _get_task_cli()
-    with _data_lock:
-        tasks = tc.load_tasks()
-        task = tc.find_task(tasks, task_id)
-        if task is None:
-            return False
-        if task.get("calendar_event_id"):
-            tc.delete_calendar_event_for_task(task)
-        tasks.remove(task)
-        tc.save_tasks(tasks)
-    return True
-
-
-def _create_bookmark(body: dict) -> dict:
-    bc = _get_bookmarks_cli()
-    url = (body.get("url") or "").strip()
-    if not url:
-        return {"error": "url required"}
-    tags = body.get("tags") or []
-    if isinstance(tags, str):
-        tags = [t.strip() for t in tags.split(",") if t.strip()]
-    with _data_lock:
-        bookmarks = bc.load_bookmarks()
-        for b in bookmarks:
-            if b["url"] == url:
-                return b  # idempotent
-        bookmark = {
-            "url": url,
-            "title": body.get("title", "") or "",
-            "tags": tags,
-            "notes": body.get("notes", "") or "",
-            "saved_at": datetime.now(timezone.utc).isoformat(),
-        }
-        bookmarks.insert(0, bookmark)
-        bc.save_bookmarks(bookmarks)
-    return bookmark
-
-
-def _delete_bookmark(url: str) -> bool:
-    bc = _get_bookmarks_cli()
-    with _data_lock:
-        bookmarks = bc.load_bookmarks()
-        before = len(bookmarks)
-        bookmarks = [b for b in bookmarks if b["url"] != url]
-        if len(bookmarks) == before:
-            return False
-        bc.save_bookmarks(bookmarks)
-    return True
-
-
-def _get_wiki_topic(ident: str) -> dict | None:
-    """Look up a topic by id or slug, hydrate bookmarks from both stores."""
-    from agent.knowledge import models as km
-    from agent.knowledge import wiki as wm
-    topic = km.get_topic(ident) or km.get_topic_by_slug(ident)
-    if not topic:
-        return None
-    by_url = {b["url"]: b for b in wm._load_bookmarks()}
-    hydrated = []
-    for url in topic.get("bookmark_urls") or []:
-        b = by_url.get(url) or {}
-        summary = b.get("summary") or b.get("notes") or ""
-        hydrated.append({
-            "url": url,
-            "title": b.get("title") or url,
-            "summary": summary,
-            "saved_at": b.get("saved_at"),
-        })
-    topic["bookmarks"] = hydrated
-    topic.pop("bookmark_urls", None)
-    return topic
-
-
-def _load_linkedin_calendar() -> dict:
-    path = BASE_DIR / "skills" / "linkedin" / "workspace" / "content_calendar.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
 
 
 # ---------------------------------------------------------------------------
