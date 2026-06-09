@@ -12,7 +12,10 @@ oauth_credentials.json
 dist/
 build/
 schedules/*.json
+schedules/disabled/
 !schedules/*.template
+skills/bookmarks/bookmarks.json*
+skills/*/workspace_backup*/
 venv/
 .venv/
 env/
