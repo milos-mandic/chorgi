@@ -30,12 +30,16 @@ async function poll() {
     // Always re-render on first load; otherwise only on shape changes
     // (full diff would be nicer, but cheap re-render is fine at this scale)
     render();
+    const sync = document.getElementById("sync-status");
+    sync.classList.remove("error");
+    sync.title = "";
     document.getElementById("last-sync").textContent =
-      "synced " + new Date().toLocaleTimeString();
-    document.getElementById("last-sync").classList.remove("error");
+      "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   } catch (e) {
-    document.getElementById("last-sync").textContent = "sync error: " + e.message;
-    document.getElementById("last-sync").classList.add("error");
+    const sync = document.getElementById("sync-status");
+    sync.classList.add("error");
+    sync.title = e.message;
+    document.getElementById("last-sync").textContent = "Sync failed";
   }
   pollCount += 1;
   if (pollCount % 5 === 0) loadWikiTopics(false);  // ~every 20s
@@ -55,17 +59,22 @@ function render() {
 
 // ---- Tabs / pages ----
 
-let activePage = localStorage.getItem("chorgi.activePage") || "tasks";
+let activePage = (location.hash || "").slice(1)
+  || localStorage.getItem("chorgi.activePage") || "tasks";
 
 function setActivePage(name) {
   activePage = name;
   localStorage.setItem("chorgi.activePage", name);
+  if (("#" + name) !== location.hash) history.replaceState(null, "", "#" + name);
   document.querySelectorAll(".tab").forEach(t => {
     t.classList.toggle("active", t.dataset.page === name);
   });
   document.querySelectorAll(".page").forEach(p => {
     p.classList.toggle("active", p.dataset.page === name);
   });
+  // Contextual primary action in the top bar
+  document.getElementById("add-task-btn").classList.toggle("hidden", name !== "tasks");
+  document.getElementById("add-bookmark-btn").classList.toggle("hidden", name !== "bookmarks");
   if (name === "wiki" && !wikiLoaded) loadWikiTopics();
   if (name === "chat" && !chatLoaded) initChat();
 }
@@ -102,6 +111,13 @@ function el(tag, attrs = {}, ...children) {
     node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
   }
   return node;
+}
+
+function emptyState(title, hint) {
+  return el("div", { class: "empty-state" },
+    el("div", { class: "empty-title" }, title),
+    hint ? el("div", { class: "empty-hint" }, hint) : null,
+  );
 }
 
 // ---- Tasks ----
@@ -251,7 +267,8 @@ function renderLinkedIn() {
     cal.week_of ? "(week of " + cal.week_of + ")" : "";
   const days = cal.days || [];
   if (!days.length) {
-    container.appendChild(el("div", { class: "muted" }, "No content calendar yet."));
+    container.appendChild(emptyState("No content calendar yet",
+      "Ask the bot to plan your LinkedIn week and it will show up here."));
     return;
   }
   for (const d of days) {
@@ -330,7 +347,16 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("add-bookmark-btn").addEventListener("click", openBookmarkModal);
 
   document.getElementById("task-cancel").addEventListener("click", closeTaskModal);
+  document.getElementById("task-modal-x").addEventListener("click", closeTaskModal);
   document.getElementById("bookmark-cancel").addEventListener("click", closeBookmarkModal);
+  document.getElementById("bookmark-modal-x").addEventListener("click", closeBookmarkModal);
+
+  // Click on the backdrop closes any modal
+  document.querySelectorAll(".modal").forEach((m) => {
+    m.addEventListener("click", (e) => {
+      if (e.target === m) m.classList.add("hidden");
+    });
+  });
 
   document.getElementById("task-save").addEventListener("click", async () => {
     const id = document.getElementById("task-id").value;
@@ -415,10 +441,15 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const validPages = [...document.querySelectorAll(".tab")].map(t => t.dataset.page);
   document.querySelectorAll(".tab").forEach(t => {
     t.addEventListener("click", () => setActivePage(t.dataset.page));
   });
-  setActivePage(activePage);
+  setActivePage(validPages.includes(activePage) ? activePage : "tasks");
+  window.addEventListener("hashchange", () => {
+    const page = location.hash.slice(1);
+    if (validPages.includes(page) && page !== activePage) setActivePage(page);
+  });
 
   poll();
 });
@@ -432,7 +463,8 @@ function renderInbox() {
   document.getElementById("inbox-count").textContent = items.length;
   list.innerHTML = "";
   if (!items.length) {
-    list.appendChild(el("div", { class: "muted" }, "Nothing to review."));
+    list.appendChild(emptyState("All clear",
+      "Proposals from the agent — new tasks, contact updates — will land here for review."));
     return;
   }
   // Group by source_interaction_id
@@ -497,16 +529,30 @@ function renderContacts() {
   document.getElementById("contacts-count").textContent = all.length;
   list.innerHTML = "";
   if (!filtered.length) {
-    list.appendChild(el("div", { class: "muted" }, all.length ? "No matches." : "No contacts yet."));
+    list.appendChild(all.length
+      ? emptyState("No matches", "Try a different name, company, or tag.")
+      : emptyState("No contacts yet", "People the agent meets in your meetings and email will appear here."));
     return;
   }
   for (const p of filtered) {
-    const sub = [p.role, p.company].filter(Boolean).join(" • ");
+    const sub = [p.role, p.company].filter(Boolean).join(" · ");
     list.appendChild(el("div", { class: "contact-card", onclick: () => openPersonModal(p.id) },
-      el("div", { class: "contact-name" }, p.name),
-      sub ? el("div", { class: "muted small" }, sub) : null,
+      avatar(p.name),
+      el("div", { class: "contact-card-body" },
+        el("div", { class: "contact-name" }, p.name),
+        sub ? el("div", { class: "muted small" }, sub) : null,
+      ),
     ));
   }
+}
+
+function avatar(name) {
+  const initials = (name || "?").trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase() || "?";
+  let hash = 0;
+  for (const ch of (name || "")) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  const node = el("div", { class: "avatar" }, initials);
+  node.style.background = `hsl(${hash % 360} 38% 46%)`;
+  return node;
 }
 
 async function openPersonModal(id) {

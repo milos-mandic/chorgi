@@ -3,49 +3,93 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)">
   <title>Chorgi</title>
   <link rel="icon" type="image/png" href="/chorgi_bot.png">
+  <link rel="apple-touch-icon" href="/chorgi_bot.png">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <img class="logo" src="/chorgi_bot.png" alt="">
-      <h1>Chorgi</h1>
+  <header class="topbar">
+    <div class="topbar-row">
+      <div class="brand">
+        <img class="logo" src="/chorgi_bot.png" alt="">
+        <div class="brand-text">
+          <span class="brand-name">Chorgi</span>
+          <span class="brand-sub">personal agent</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="sync" id="sync-status">
+          <span class="sync-dot"></span>
+          <span id="last-sync" class="sync-text">Connecting…</span>
+        </div>
+        <button id="add-task-btn" class="primary action-btn hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          New task
+        </button>
+        <button id="add-bookmark-btn" class="primary action-btn hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add bookmark
+        </button>
+      </div>
     </div>
-    <div class="status">
-      <span id="last-sync" class="muted">syncing…</span>
-      <button id="add-task-btn" class="primary">+ Task</button>
-      <button id="add-bookmark-btn" class="primary">+ Bookmark</button>
-    </div>
-  </header>
 
-  <nav class="tabs" id="tabs">
-    <button class="tab" data-page="tasks">Tasks <span class="tab-badge" id="tab-badge-tasks">0</span></button>
-    <button class="tab" data-page="bookmarks">Bookmarks <span class="tab-badge" id="tab-badge-bookmarks">0</span></button>
-    <button class="tab" data-page="wiki">Wiki <span class="tab-badge" id="tab-badge-wiki">0</span></button>
-    <button class="tab" data-page="inbox">Inbox <span class="tab-badge" id="tab-badge-inbox">0</span></button>
-    <button class="tab" data-page="contacts">Contacts <span class="tab-badge" id="tab-badge-contacts">0</span></button>
-    <button class="tab" data-page="linkedin">LinkedIn</button>
-    <button class="tab" data-page="chat">Chat</button>
-  </nav>
+    <nav class="tabs" id="tabs">
+      <button class="tab" data-page="tasks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span class="tab-label">Tasks</span>
+        <span class="tab-badge" id="tab-badge-tasks">0</span>
+      </button>
+      <button class="tab" data-page="bookmarks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        <span class="tab-label">Bookmarks</span>
+        <span class="tab-badge" id="tab-badge-bookmarks">0</span>
+      </button>
+      <button class="tab" data-page="wiki">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        <span class="tab-label">Wiki</span>
+        <span class="tab-badge" id="tab-badge-wiki">0</span>
+      </button>
+      <button class="tab" data-page="inbox">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+        <span class="tab-label">Inbox</span>
+        <span class="tab-badge" id="tab-badge-inbox">0</span>
+      </button>
+      <button class="tab" data-page="contacts">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span class="tab-label">Contacts</span>
+        <span class="tab-badge" id="tab-badge-contacts">0</span>
+      </button>
+      <button class="tab" data-page="linkedin">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <span class="tab-label">LinkedIn</span>
+      </button>
+      <button class="tab" data-page="chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        <span class="tab-label">Chat</span>
+      </button>
+    </nav>
+  </header>
 
   <main class="board">
     <!-- Tasks kanban -->
     <section class="board-section page" id="tasks-section" data-page="tasks">
-      <h2>Tasks</h2>
+      <div class="section-head">
+        <h2>Tasks</h2>
+      </div>
       <div class="kanban">
         <div class="kanban-col" data-status="pending">
-          <h3>Pending <span class="count" id="count-pending">0</span></h3>
+          <h3><span class="col-title">Pending</span> <span class="count" id="count-pending">0</span></h3>
           <div class="cards" id="col-pending"></div>
         </div>
         <div class="kanban-col" data-status="scheduled">
-          <h3>Scheduled <span class="count" id="count-scheduled">0</span></h3>
+          <h3><span class="col-title">Scheduled</span> <span class="count" id="count-scheduled">0</span></h3>
           <div class="cards" id="col-scheduled"></div>
         </div>
         <div class="kanban-col" data-status="done">
-          <h3>Done <span class="count" id="count-done">0</span></h3>
+          <h3><span class="col-title">Done</span> <span class="count" id="count-done">0</span></h3>
           <div class="cards" id="col-done"></div>
         </div>
       </div>
@@ -53,49 +97,75 @@
 
     <!-- Bookmarks -->
     <section class="board-section page" id="bookmarks-section" data-page="bookmarks">
-      <h2>Bookmarks <input type="search" id="bookmark-search" placeholder="search…"></h2>
+      <div class="section-head">
+        <h2>Bookmarks</h2>
+        <div class="section-tools">
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input type="search" id="bookmark-search" placeholder="Search bookmarks…">
+          </div>
+        </div>
+      </div>
       <div class="bookmark-groups" id="bookmark-groups"></div>
     </section>
 
     <!-- Inbox (agent proposals) -->
     <section class="board-section page" id="inbox-section" data-page="inbox">
-      <h2>Inbox <span class="count" id="inbox-count">0</span></h2>
+      <div class="section-head">
+        <h2>Inbox <span class="count" id="inbox-count">0</span></h2>
+      </div>
       <div id="inbox-list" class="inbox-list"></div>
     </section>
 
     <!-- Contacts -->
     <section class="board-section page" id="contacts-section" data-page="contacts">
-      <h2>Contacts <span class="count" id="contacts-count">0</span>
-        <input type="search" id="contacts-search" placeholder="search…">
-      </h2>
+      <div class="section-head">
+        <h2>Contacts <span class="count" id="contacts-count">0</span></h2>
+        <div class="section-tools">
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input type="search" id="contacts-search" placeholder="Search contacts…">
+          </div>
+        </div>
+      </div>
       <div id="contacts-list" class="contacts-list"></div>
     </section>
 
     <!-- Person detail modal -->
     <div class="modal hidden" id="person-modal">
       <div class="modal-card">
-        <h3 id="person-modal-name">Person</h3>
+        <div class="modal-head">
+          <h3 id="person-modal-name">Person</h3>
+          <button class="icon-btn modal-x" id="person-modal-close" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
         <div id="person-modal-meta" class="muted"></div>
         <div id="person-modal-tags"></div>
         <h4>Recent interactions</h4>
         <div id="person-modal-interactions"></div>
-        <div class="modal-actions">
-          <button id="person-modal-close" class="primary">Close</button>
-        </div>
       </div>
     </div>
 
     <!-- LinkedIn week -->
     <section class="board-section page" id="linkedin-section" data-page="linkedin">
-      <h2>LinkedIn week <span class="muted" id="linkedin-week-of"></span></h2>
+      <div class="section-head">
+        <h2>LinkedIn <span class="muted" id="linkedin-week-of"></span></h2>
+      </div>
       <div class="linkedin-week" id="linkedin-days"></div>
     </section>
 
     <!-- Wiki -->
     <section class="board-section page" id="wiki-section" data-page="wiki">
-      <h2>Wiki <span class="count" id="wiki-count">0</span>
-        <button id="wiki-recluster-btn" class="primary" style="margin-left:12px;">Recluster</button>
-      </h2>
+      <div class="section-head">
+        <h2>Wiki <span class="count" id="wiki-count">0</span></h2>
+        <div class="section-tools">
+          <button id="wiki-recluster-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Recluster
+          </button>
+        </div>
+      </div>
       <div class="wiki-layout">
         <aside class="wiki-sidebar">
           <ul id="wiki-topic-list"></ul>
@@ -113,7 +183,10 @@
     <section class="board-section page" id="chat-section" data-page="chat">
       <div class="chat-layout">
         <aside class="chat-sidebar">
-          <button id="chat-new-btn" class="primary">+ New chat</button>
+          <button id="chat-new-btn" class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            New chat
+          </button>
           <ul id="chat-conv-list"></ul>
         </aside>
         <main class="chat-main">
@@ -121,7 +194,9 @@
           <div id="chat-messages"></div>
           <div class="chat-composer">
             <textarea id="chat-input" rows="1" placeholder="Message your local model…"></textarea>
-            <button id="chat-send" class="primary">Send</button>
+            <button id="chat-send" class="primary chat-send-btn" aria-label="Send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
           </div>
         </main>
       </div>
@@ -131,34 +206,40 @@
   <!-- Task modal -->
   <div class="modal hidden" id="task-modal">
     <div class="modal-card">
-      <h3 id="task-modal-title">Add task</h3>
+      <div class="modal-head">
+        <h3 id="task-modal-title">Add task</h3>
+        <button class="icon-btn modal-x" id="task-modal-x" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
       <input type="hidden" id="task-id">
-      <label>Title <input type="text" id="task-title" autocomplete="off"></label>
-      <label>Notes <textarea id="task-notes" rows="3"></textarea></label>
+      <label>Title <input type="text" id="task-title" autocomplete="off" placeholder="What needs doing?"></label>
+      <label>Notes <textarea id="task-notes" rows="3" placeholder="Optional details"></textarea></label>
       <div class="row">
         <label>Priority
           <select id="task-priority">
-            <option value="high">high</option>
-            <option value="medium" selected>medium</option>
-            <option value="low">low</option>
+            <option value="high">High</option>
+            <option value="medium" selected>Medium</option>
+            <option value="low">Low</option>
           </select>
         </label>
         <label>Status
           <select id="task-status">
-            <option value="pending" selected>pending</option>
-            <option value="scheduled">scheduled</option>
-            <option value="done">done</option>
+            <option value="pending" selected>Pending</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="done">Done</option>
           </select>
         </label>
-        <label>Estimate (min) <input type="number" id="task-estimate" min="5" step="5"></label>
+        <label>Estimate (min) <input type="number" id="task-estimate" min="5" step="5" placeholder="30"></label>
         <label>When <input type="datetime-local" id="task-scheduled-at"></label>
         <label>Deadline <input type="date" id="task-deadline"></label>
       </div>
-      <label>Tags (comma-separated) <input type="text" id="task-tags"></label>
+      <label>Tags <input type="text" id="task-tags" placeholder="comma, separated"></label>
       <div class="modal-actions">
+        <button id="task-delete" class="danger-ghost hidden">Delete</button>
+        <span class="modal-actions-spacer"></span>
         <button id="task-cancel">Cancel</button>
-        <button id="task-delete" class="danger hidden">Delete</button>
-        <button id="task-save" class="primary">Save</button>
+        <button id="task-save" class="primary">Save task</button>
       </div>
     </div>
   </div>
@@ -166,14 +247,20 @@
   <!-- Bookmark modal -->
   <div class="modal hidden" id="bookmark-modal">
     <div class="modal-card">
-      <h3>Add bookmark</h3>
-      <label>URL <input type="url" id="bookmark-url" autocomplete="off"></label>
-      <label>Title <input type="text" id="bookmark-title"></label>
-      <label>Tags (comma-separated) <input type="text" id="bookmark-tags"></label>
-      <label>Notes <textarea id="bookmark-notes" rows="2"></textarea></label>
+      <div class="modal-head">
+        <h3>Add bookmark</h3>
+        <button class="icon-btn modal-x" id="bookmark-modal-x" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <label>URL <input type="url" id="bookmark-url" autocomplete="off" placeholder="https://…"></label>
+      <label>Title <input type="text" id="bookmark-title" placeholder="Optional — fetched if blank"></label>
+      <label>Tags <input type="text" id="bookmark-tags" placeholder="comma, separated"></label>
+      <label>Notes <textarea id="bookmark-notes" rows="2" placeholder="Why is this worth keeping?"></textarea></label>
       <div class="modal-actions">
+        <span class="modal-actions-spacer"></span>
         <button id="bookmark-cancel">Cancel</button>
-        <button id="bookmark-save" class="primary">Save</button>
+        <button id="bookmark-save" class="primary">Save bookmark</button>
       </div>
     </div>
   </div>
