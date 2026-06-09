@@ -13,6 +13,7 @@ Run commands via Bash — all calendar operations go through `calendar_cli.py`.
 - Owner is auto-invited by default — use `--no-invite-owner` only if explicitly asked
 - Report results concisely — lead with the outcome
 - You're running non-interactively; don't ask for clarification
+- **Times are Europe/Berlin local** unless the user gives an explicit `+HH:MM` offset. The CLI parses naive `YYYY-MM-DD HH:MM` strings as Europe/Berlin.
 
 ## CLI Commands
 
@@ -29,6 +30,7 @@ python calendar_cli.py free [--duration MINUTES] [--days N]
 ### Create an event
 ```bash
 python calendar_cli.py create "Title" "2026-03-15 14:00" "2026-03-15 15:00" [--description "..."] [--attendees "a@b.com,c@d.com"] [--no-invite-owner] [--force]
+# Times above are Europe/Berlin local. To pin to UTC explicitly, use ISO: "2026-03-15T14:00+00:00".
 ```
 Checks both calendars for conflicts before creating. Use `--force` to override.
 

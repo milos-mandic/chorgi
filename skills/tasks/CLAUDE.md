@@ -19,8 +19,9 @@ python3 task_cli.py add "Buy groceries" --priority medium --estimate 45 --tags "
 - Title is required. All flags are optional.
 - Priority: `high`, `medium` (default), `low`
 - Estimate: minutes (integer)
-- Deadline: `YYYY-MM-DD` format
+- Deadline: `YYYY-MM-DD` format — a constraint ("must be done by"), not a calendar placement
 - Tags: comma-separated
+- `--scheduled-at "YYYY-MM-DD HH:MM"` (Europe/Berlin) — schedule the task immediately. Creates a calendar event on the bot calendar with the owner invited, and stores the task with `status=scheduled`. Use this when the user gives a concrete date AND time.
 
 ### List tasks
 ```bash
@@ -61,7 +62,13 @@ python3 task_cli.py clear-done
 - "I need to buy groceries" → title "Buy groceries", tags ["errands"], estimate 45
 - "Call the dentist, it's urgent" → title "Call dentist", priority high, estimate 10, tags ["phone"]
 - "Finish the report by Friday" → title "Finish the report", deadline (next Friday's date), priority high
+- "Coffee with Maria Wednesday 10am" → title "Coffee with Maria", `--scheduled-at "<that Wednesday date> 10:00"` — this also creates a calendar event.
 - If the user mentions context like "for the house" or "work stuff", capture in tags/notes.
+
+**Pending vs scheduled:**
+- If the user gives a specific date AND time → use `--scheduled-at`. The task lands in Scheduled and a calendar event is created in one step.
+- If the user gives only a date (no time) → use `--deadline`. The task stays Pending; the nightly planner will place it on the calendar.
+- If no date/time at all → omit both. Task is Pending.
 
 **When listing:** Format results clearly. Show title, priority, status, and any deadline. If many tasks, group by priority or status.
 

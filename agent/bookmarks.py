@@ -82,53 +82,73 @@ def fetch_page_meta(url: str) -> dict:
     return result
 
 
-def _load_data() -> dict:
-    if BOOKMARKS_FILE.exists():
-        try:
-            return json.loads(BOOKMARKS_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"bookmarks": []}
+def load_bookmarks() -> list[dict]:
+    """Return all bookmarks as a flat list (newest first by convention)."""
+    if not BOOKMARKS_FILE.exists():
+        return []
+    try:
+        data = json.loads(BOOKMARKS_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    # Tolerate the legacy {"bookmarks": [...]} shape during transition.
+    if isinstance(data, dict) and isinstance(data.get("bookmarks"), list):
+        return data["bookmarks"]
+    if isinstance(data, list):
+        return data
+    return []
 
 
-def _save_data(data: dict):
+def save_bookmarks(bookmarks: list[dict]) -> None:
     BOOKMARKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    BOOKMARKS_FILE.write_text(json.dumps(data, indent=2) + "\n")
+    BOOKMARKS_FILE.write_text(json.dumps(bookmarks, indent=2) + "\n")
 
 
-def add_bookmark(url: str, title: str, summary: str) -> int:
-    """Append a bookmark. Returns count of unsent bookmarks."""
-    data = _load_data()
-    # Avoid duplicates
-    for b in data["bookmarks"]:
+def add_bookmark(
+    url: str,
+    title: str = "",
+    summary: str = "",
+    *,
+    notes: str = "",
+    tags: list[str] | None = None,
+) -> int:
+    """Insert or merge a bookmark. Returns count of unsent bookmarks."""
+    bookmarks = load_bookmarks()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for b in bookmarks:
         if b["url"] == url:
-            b["title"] = title
-            b["summary"] = summary
-            _save_data(data)
-            return sum(1 for b in data["bookmarks"] if not b.get("emailed"))
-
-    data["bookmarks"].append({
-        "url": url,
-        "title": title,
-        "summary": summary,
-        "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "emailed": False,
-    })
-    _save_data(data)
-    return sum(1 for b in data["bookmarks"] if not b.get("emailed"))
+            if title:
+                b["title"] = title
+            if summary:
+                b["summary"] = summary
+            if notes:
+                b["notes"] = notes
+            if tags:
+                b["tags"] = tags
+            break
+    else:
+        bookmarks.insert(0, {
+            "url": url,
+            "title": title,
+            "summary": summary,
+            "notes": notes,
+            "tags": tags or [],
+            "saved_at": now,
+            "emailed": False,
+        })
+    save_bookmarks(bookmarks)
+    return sum(1 for b in bookmarks if not b.get("emailed"))
 
 
 def get_unsent_bookmarks() -> list[dict]:
     """Return bookmarks where emailed == false."""
-    data = _load_data()
-    return [b for b in data["bookmarks"] if not b.get("emailed")]
+    return [b for b in load_bookmarks() if not b.get("emailed")]
 
 
 def mark_emailed(urls: list[str]):
     """Set emailed = true for given URLs."""
-    data = _load_data()
+    bookmarks = load_bookmarks()
     url_set = set(urls)
-    for b in data["bookmarks"]:
+    for b in bookmarks:
         if b["url"] in url_set:
             b["emailed"] = True
-    _save_data(data)
+    save_bookmarks(bookmarks)

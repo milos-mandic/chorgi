@@ -380,6 +380,13 @@ class Orchestrator:
 
             self.memory.append_short_term(f"Bookmarked: {title} — {url}")
 
+            # Assign to a wiki topic in the background — must not poison bookmark add.
+            try:
+                from agent.knowledge import wiki as wiki_mod
+                asyncio.create_task(wiki_mod.assign_or_create_topic(url, title, summary))
+            except Exception as e:
+                logger.warning(f"Wiki assignment failed for {url}: {e}")
+
         # Check digest threshold
         digest_note = ""
         unsent = bookmarks.get_unsent_bookmarks()

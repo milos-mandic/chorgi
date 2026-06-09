@@ -8,6 +8,10 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# Keep in sync with skills/tasks/task_cli.py:_parse_scheduled_at
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
 
 # Add skill directory to path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -59,7 +63,7 @@ class NavigationalParser(argparse.ArgumentParser):
 # --- Helpers ---
 
 def _parse_dt(s: str) -> datetime:
-    """Parse a datetime string in common formats."""
+    """Parse a datetime string. Naive strings are interpreted as Europe/Berlin local time."""
     for fmt in (
         "%Y-%m-%d %H:%M",
         "%Y-%m-%dT%H:%M",
@@ -69,12 +73,15 @@ def _parse_dt(s: str) -> datetime:
     ):
         try:
             dt = datetime.strptime(s, fmt)
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=LOCAL_TZ)
         except ValueError:
             continue
-    # Try ISO format with timezone
+    # ISO format — if it carries its own offset, honor it; otherwise apply local TZ.
     try:
-        return datetime.fromisoformat(s)
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=LOCAL_TZ)
+        return dt
     except ValueError:
         pass
     raise ValueError(f"Cannot parse datetime: {s}")

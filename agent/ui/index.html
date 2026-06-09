@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Chorgi</title>
+  <link rel="icon" type="image/png" href="/chorgi_bot.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img class="logo" src="/chorgi_bot.png" alt="">
+      <h1>Chorgi</h1>
+    </div>
+    <div class="status">
+      <span id="last-sync" class="muted">syncing…</span>
+      <button id="add-task-btn" class="primary">+ Task</button>
+      <button id="add-bookmark-btn" class="primary">+ Bookmark</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab" data-page="tasks">Tasks <span class="tab-badge" id="tab-badge-tasks">0</span></button>
+    <button class="tab" data-page="bookmarks">Bookmarks <span class="tab-badge" id="tab-badge-bookmarks">0</span></button>
+    <button class="tab" data-page="wiki">Wiki <span class="tab-badge" id="tab-badge-wiki">0</span></button>
+    <button class="tab" data-page="inbox">Inbox <span class="tab-badge" id="tab-badge-inbox">0</span></button>
+    <button class="tab" data-page="contacts">Contacts <span class="tab-badge" id="tab-badge-contacts">0</span></button>
+    <button class="tab" data-page="linkedin">LinkedIn</button>
+    <button class="tab" data-page="chat">Chat</button>
+  </nav>
+
+  <main class="board">
+    <!-- Tasks kanban -->
+    <section class="board-section page" id="tasks-section" data-page="tasks">
+      <h2>Tasks</h2>
+      <div class="kanban">
+        <div class="kanban-col" data-status="pending">
+          <h3>Pending <span class="count" id="count-pending">0</span></h3>
+          <div class="cards" id="col-pending"></div>
+        </div>
+        <div class="kanban-col" data-status="scheduled">
+          <h3>Scheduled <span class="count" id="count-scheduled">0</span></h3>
+          <div class="cards" id="col-scheduled"></div>
+        </div>
+        <div class="kanban-col" data-status="done">
+          <h3>Done <span class="count" id="count-done">0</span></h3>
+          <div class="cards" id="col-done"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bookmarks -->
+    <section class="board-section page" id="bookmarks-section" data-page="bookmarks">
+      <h2>Bookmarks <input type="search" id="bookmark-search" placeholder="search…"></h2>
+      <div class="bookmark-groups" id="bookmark-groups"></div>
+    </section>
+
+    <!-- Inbox (agent proposals) -->
+    <section class="board-section page" id="inbox-section" data-page="inbox">
+      <h2>Inbox <span class="count" id="inbox-count">0</span></h2>
+      <div id="inbox-list" class="inbox-list"></div>
+    </section>
+
+    <!-- Contacts -->
+    <section class="board-section page" id="contacts-section" data-page="contacts">
+      <h2>Contacts <span class="count" id="contacts-count">0</span>
+        <input type="search" id="contacts-search" placeholder="search…">
+      </h2>
+      <div id="contacts-list" class="contacts-list"></div>
+    </section>
+
+    <!-- Person detail modal -->
+    <div class="modal hidden" id="person-modal">
+      <div class="modal-card">
+        <h3 id="person-modal-name">Person</h3>
+        <div id="person-modal-meta" class="muted"></div>
+        <div id="person-modal-tags"></div>
+        <h4>Recent interactions</h4>
+        <div id="person-modal-interactions"></div>
+        <div class="modal-actions">
+          <button id="person-modal-close" class="primary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- LinkedIn week -->
+    <section class="board-section page" id="linkedin-section" data-page="linkedin">
+      <h2>LinkedIn week <span class="muted" id="linkedin-week-of"></span></h2>
+      <div class="linkedin-week" id="linkedin-days"></div>
+    </section>
+
+    <!-- Wiki -->
+    <section class="board-section page" id="wiki-section" data-page="wiki">
+      <h2>Wiki <span class="count" id="wiki-count">0</span>
+        <button id="wiki-recluster-btn" class="primary" style="margin-left:12px;">Recluster</button>
+      </h2>
+      <div class="wiki-layout">
+        <aside class="wiki-sidebar">
+          <ul id="wiki-topic-list"></ul>
+        </aside>
+        <main class="wiki-content">
+          <div id="wiki-empty" class="muted">Select a topic to view its article.</div>
+          <article id="wiki-article" class="hidden"></article>
+          <h4 id="wiki-sources-heading" class="hidden">Sources</h4>
+          <ul id="wiki-sources" class="hidden"></ul>
+        </main>
+      </div>
+    </section>
+
+    <!-- Local chat -->
+    <section class="board-section page" id="chat-section" data-page="chat">
+      <div class="chat-layout">
+        <aside class="chat-sidebar">
+          <button id="chat-new-btn" class="primary">+ New chat</button>
+          <ul id="chat-conv-list"></ul>
+        </aside>
+        <main class="chat-main">
+          <div id="chat-model" class="muted small"></div>
+          <div id="chat-messages"></div>
+          <div class="chat-composer">
+            <textarea id="chat-input" rows="1" placeholder="Message your local model…"></textarea>
+            <button id="chat-send" class="primary">Send</button>
+          </div>
+        </main>
+      </div>
+    </section>
+  </main>
+
+  <!-- Task modal -->
+  <div class="modal hidden" id="task-modal">
+    <div class="modal-card">
+      <h3 id="task-modal-title">Add task</h3>
+      <input type="hidden" id="task-id">
+      <label>Title <input type="text" id="task-title" autocomplete="off"></label>
+      <label>Notes <textarea id="task-notes" rows="3"></textarea></label>
+      <div class="row">
+        <label>Priority
+          <select id="task-priority">
+            <option value="high">high</option>
+            <option value="medium" selected>medium</option>
+            <option value="low">low</option>
+          </select>
+        </label>
+        <label>Status
+          <select id="task-status">
+            <option value="pending" selected>pending</option>
+            <option value="scheduled">scheduled</option>
+            <option value="done">done</option>
+          </select>
+        </label>
+        <label>Estimate (min) <input type="number" id="task-estimate" min="5" step="5"></label>
+        <label>When <input type="datetime-local" id="task-scheduled-at"></label>
+        <label>Deadline <input type="date" id="task-deadline"></label>
+      </div>
+      <label>Tags (comma-separated) <input type="text" id="task-tags"></label>
+      <div class="modal-actions">
+        <button id="task-cancel">Cancel</button>
+        <button id="task-delete" class="danger hidden">Delete</button>
+        <button id="task-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bookmark modal -->
+  <div class="modal hidden" id="bookmark-modal">
+    <div class="modal-card">
+      <h3>Add bookmark</h3>
+      <label>URL <input type="url" id="bookmark-url" autocomplete="off"></label>
+      <label>Title <input type="text" id="bookmark-title"></label>
+      <label>Tags (comma-separated) <input type="text" id="bookmark-tags"></label>
+      <label>Notes <textarea id="bookmark-notes" rows="2"></textarea></label>
+      <div class="modal-actions">
+        <button id="bookmark-cancel">Cancel</button>
+        <button id="bookmark-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast stack -->
+  <div id="toasts"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

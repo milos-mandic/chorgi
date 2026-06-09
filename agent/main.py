@@ -21,6 +21,7 @@ from telegram.ext import (
 from agent.orchestrator import Orchestrator
 from agent.scheduler import Scheduler
 from agent.webhook import WebhookServer
+from agent.knowledge import db as knowledge_db
 from agent import voice
 from agent.onboarding import (
     start_onboarding, handle_name, handle_role, handle_style,
@@ -60,7 +61,9 @@ def load_secrets():
                  "FATHOM_WEBHOOK_SECRET",
                  "GOOGLE_OAUTH_CREDENTIALS", "CALENDAR_OWNER_ID",
                  "CALENDAR_BOT_ID",
-                 "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"):
+                 "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
+                 "LINKEDIN_COOKIE",
+                 "LOCAL_LLM_BASE_URL", "LOCAL_LLM_MODEL", "LOCAL_LLM_API_KEY"):
         env_val = os.environ.get(key)
         if env_val:
             secrets[key] = env_val
@@ -290,9 +293,19 @@ def main():
     for key in ("WEBHOOK_SECRET", "WEBHOOK_PORT", "FATHOM_WEBHOOK_SECRET",
                  "GOOGLE_OAUTH_CREDENTIALS", "CALENDAR_OWNER_ID",
                  "CALENDAR_BOT_ID",
-                 "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"):
+                 "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
+                 "LINKEDIN_COOKIE",
+                 "LOCAL_LLM_BASE_URL", "LOCAL_LLM_MODEL", "LOCAL_LLM_API_KEY"):
         if secrets.get(key):
             os.environ[key] = secrets[key]
+
+    # Apply pending knowledge-layer migrations before anything reads the DB.
+    try:
+        applied = knowledge_db.run_migrations()
+        if applied:
+            logger.info("Knowledge migrations applied: %s", ", ".join(applied))
+    except Exception:
+        logger.exception("Knowledge migrations failed")
 
     orchestrator = Orchestrator(authorized_user_id=secrets["TELEGRAM_USER_ID"])
 

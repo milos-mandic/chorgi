@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""CLI for managing bookmarks. Data stored in workspace/bookmarks.json."""
+"""CLI for managing bookmarks. Data stored in skills/bookmarks/bookmarks.json
+(shared with the agent's Haiku fast-path and the web UI)."""
 
 import argparse
 import json
@@ -7,35 +8,51 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_FILE = Path(__file__).parent / "workspace" / "bookmarks.json"
+DATA_FILE = Path(__file__).parent / "bookmarks.json"
 
 
 def load_bookmarks() -> list[dict]:
-    if DATA_FILE.exists():
-        return json.loads(DATA_FILE.read_text())
-    return []
+    if not DATA_FILE.exists():
+        return []
+    try:
+        data = json.loads(DATA_FILE.read_text())
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict) and isinstance(data.get("bookmarks"), list):
+        return data["bookmarks"]
+    return data if isinstance(data, list) else []
 
 
 def save_bookmarks(bookmarks: list[dict]) -> None:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DATA_FILE.write_text(json.dumps(bookmarks, indent=2))
+    DATA_FILE.write_text(json.dumps(bookmarks, indent=2) + "\n")
 
 
 def cmd_add(args):
     bookmarks = load_bookmarks()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_tags = [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else []
 
-    # Check for duplicate URL
     for b in bookmarks:
         if b["url"] == args.url:
-            print(f"Already bookmarked: {b['title'] or b['url']}")
+            if args.title:
+                b["title"] = args.title
+            if args.notes:
+                b["notes"] = args.notes
+            if new_tags:
+                b["tags"] = new_tags
+            save_bookmarks(bookmarks)
+            print(f"Updated: {b.get('title') or b['url']}")
             return
 
     bookmark = {
         "url": args.url,
         "title": args.title or "",
-        "tags": [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else [],
+        "summary": "",
         "notes": args.notes or "",
-        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "tags": new_tags,
+        "saved_at": now,
+        "emailed": False,
     }
     bookmarks.insert(0, bookmark)
     save_bookmarks(bookmarks)
@@ -61,7 +78,7 @@ def cmd_list(args):
     print(f"{len(bookmarks)} bookmark(s):\n")
     for b in bookmarks:
         title = b.get("title") or b["url"]
-        date = b.get("saved_at", "")[:10]
+        date = (b.get("saved_at") or "")[:10]
         tags = ", ".join(b.get("tags", []))
         print(f"  {title}")
         print(f"  {b['url']}")
@@ -69,6 +86,8 @@ def cmd_list(args):
             print(f"  Tags: {tags}")
         if b.get("notes"):
             print(f"  Notes: {b['notes']}")
+        if b.get("summary"):
+            print(f"  Summary: {b['summary'][:140]}")
         print(f"  Saved: {date}")
         print()
 
@@ -83,6 +102,7 @@ def cmd_search(args):
             b.get("url", ""),
             b.get("title", ""),
             b.get("notes", ""),
+            b.get("summary", ""),
             " ".join(b.get("tags", [])),
         ]).lower()
         if query in searchable:

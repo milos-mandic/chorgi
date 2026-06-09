@@ -1,0 +1,7 @@
+{
+  "name": "post_meeting",
+  "description": "Post-meeting closure: read Fathom transcripts, match attendees to known people, propose tasks and contact updates as inbox items for review.",
+  "tools": ["Bash", "Read"],
+  "max_turns": 15,
+  "timeout_seconds": 180
+}

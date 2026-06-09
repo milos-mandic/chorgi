@@ -5,9 +5,16 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+CALENDAR_CLI = Path(__file__).resolve().parent.parent / "calendar" / "calendar_cli.py"
+# Calendar CLI needs google-api-python-client etc. — only the project venv has them.
+# Falls back to sys.executable if the venv binary is missing.
+_VENV_PY = Path(__file__).resolve().parent.parent.parent / ".venv" / "bin" / "python3"
+PYTHON_FOR_CALENDAR = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 DATA_FILE = Path(__file__).parent / "workspace" / "tasks.json"
 
@@ -54,15 +61,105 @@ def cmd_add(args):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "carry_count": 0,
     }
+
+    scheduled_at = getattr(args, "scheduled_at", None)
+    if scheduled_at:
+        result = create_calendar_event_for_task(task, scheduled_at)
+        if result.get("ok"):
+            task["status"] = "scheduled"
+            task["scheduled_at"] = result["scheduled_at"]
+            task["calendar_event_id"] = result["event_id"]
+        else:
+            print(f"Warning: calendar event not created ({result.get('error', 'unknown')}). Task saved as pending.")
+
     tasks.insert(0, task)
     save_tasks(tasks)
     print(f"Added: {task['title']} [{task['id']}]")
     if task["priority"] != "medium":
         print(f"Priority: {task['priority']}")
+    if task["status"] == "scheduled":
+        print(f"Scheduled: {task['scheduled_at']}")
     if task["deadline"]:
         print(f"Deadline: {task['deadline']}")
     if task["tags"]:
         print(f"Tags: {', '.join(task['tags'])}")
+
+
+def _parse_scheduled_at(value: str) -> datetime:
+    """Parse a 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DDTHH:MM' string as Europe/Berlin local time."""
+    from zoneinfo import ZoneInfo
+    s = value.strip().replace("T", " ")
+    # tolerate trailing seconds
+    fmt = "%Y-%m-%d %H:%M:%S" if s.count(":") == 2 else "%Y-%m-%d %H:%M"
+    dt = datetime.strptime(s, fmt)
+    return dt.replace(tzinfo=ZoneInfo("Europe/Berlin"))
+
+
+def _run_calendar_cli(args: list[str]) -> dict:
+    """Invoke calendar_cli.py as a subprocess; return parsed-JSON stdout or {ok: False, error}."""
+    try:
+        proc = subprocess.run(
+            [PYTHON_FOR_CALENDAR, str(CALENDAR_CLI), *args],
+            capture_output=True, text=True, timeout=60,
+        )
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return {"ok": False, "error": f"calendar_cli output not JSON: {proc.stdout[:200] or proc.stderr[:200]}"}
+        if proc.returncode != 0 or "error" in payload:
+            return {"ok": False, "error": payload.get("error") or f"calendar_cli exited {proc.returncode}"}
+        return {"ok": True, "data": payload}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "calendar_cli timed out"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def create_calendar_event_for_task(task: dict, scheduled_at: str) -> dict:
+    """Create a bot-calendar event for the given task via calendar_cli subprocess."""
+    start = _parse_scheduled_at(scheduled_at)
+    duration = int(task.get("estimated_minutes") or 60)
+    end = start + timedelta(minutes=duration)
+    args = [
+        "create", task["title"],
+        start.strftime("%Y-%m-%d %H:%M"),
+        end.strftime("%Y-%m-%d %H:%M"),
+        "--force",
+    ]
+    if task.get("notes"):
+        args.extend(["--description", task["notes"]])
+    res = _run_calendar_cli(args)
+    if not res["ok"]:
+        return {"ok": False, "error": res["error"]}
+    event = res["data"]
+    return {"ok": True, "event_id": event.get("id", ""), "scheduled_at": start.isoformat()}
+
+
+def update_calendar_event_for_task(task: dict, scheduled_at: str) -> dict:
+    """Update the event time on the bot calendar via calendar_cli subprocess."""
+    start = _parse_scheduled_at(scheduled_at)
+    duration = int(task.get("estimated_minutes") or 60)
+    end = start + timedelta(minutes=duration)
+    args = [
+        "update", task["calendar_event_id"],
+        "--title", task["title"],
+        "--start", start.strftime("%Y-%m-%d %H:%M"),
+        "--end", end.strftime("%Y-%m-%d %H:%M"),
+    ]
+    if task.get("notes"):
+        args.extend(["--description", task["notes"]])
+    res = _run_calendar_cli(args)
+    if not res["ok"]:
+        return {"ok": False, "error": res["error"]}
+    return {"ok": True, "scheduled_at": start.isoformat()}
+
+
+def delete_calendar_event_for_task(task: dict) -> dict:
+    """Delete the bot-calendar event tied to this task via calendar_cli subprocess."""
+    res = _run_calendar_cli(["delete", task["calendar_event_id"]])
+    if not res["ok"]:
+        return {"ok": False, "error": res["error"]}
+    return {"ok": True}
 
 
 def cmd_list(args):
@@ -439,6 +536,7 @@ def main():
     add_p.add_argument("--estimate", "-e", type=int, default=None, help="Estimated minutes")
     add_p.add_argument("--deadline", "-d", default=None, help="Deadline (YYYY-MM-DD)")
     add_p.add_argument("--tags", "-t", default="", help="Comma-separated tags")
+    add_p.add_argument("--scheduled-at", default=None, help="Schedule on calendar: 'YYYY-MM-DD HH:MM' (Europe/Berlin)")
 
     list_p = sub.add_parser("list", help="List tasks")
     list_p.add_argument("--status", "-s", choices=["pending", "scheduled", "done", "all"], default=None, help="Filter by status")

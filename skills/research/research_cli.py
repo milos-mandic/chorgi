@@ -124,11 +124,6 @@ def cmd_send_briefing(args):
         print("No briefing draft found at workspace/briefing_draft.json")
         sys.exit(1)
 
-    user_email = os.environ.get("USER_EMAIL", "")
-    if not user_email:
-        print("USER_EMAIL env var not set")
-        sys.exit(1)
-
     draft = json.loads(BRIEFING_DRAFT.read_text())
     history = _load_sent_history()
     sent_urls = set(history["sent_urls"])
@@ -148,6 +143,11 @@ def cmd_send_briefing(args):
     if not filtered_topics:
         print("No fresh articles to send (none from the last 24 hours).")
         return
+
+    user_email = os.environ.get("USER_EMAIL", "")
+    if not user_email:
+        print("USER_EMAIL env var not set")
+        sys.exit(1)
 
     draft["topics"] = filtered_topics
     today = datetime.now().strftime("%B %d, %Y")

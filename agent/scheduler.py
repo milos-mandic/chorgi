@@ -45,22 +45,19 @@ class Scheduler:
         memory = self.orchestrator.memory
 
         await memory.prune_short_term()
-        await memory.promote_to_long_term(self.orchestrator.haiku_query)
-
-        # One-time dedup of long_term.md (delete .dedup_done to re-trigger)
-        dedup_flag = memory.memory_dir / ".dedup_done"
-        if not dedup_flag.exists():
-            try:
-                await memory.deduplicate_long_term(self.orchestrator.haiku_query)
-                dedup_flag.touch()
-                logger.info("One-time long_term.md dedup complete")
-            except Exception as e:
-                logger.error(f"Long-term dedup failed: {e}")
+        # TODO(M2): remove the short_term→long_term Haiku promotion path
+        # entirely. The knowledge layer (people/interactions/inbox_items) is
+        # now the durable store; long_term.md is read-only legacy until then.
+        # await memory.promote_to_long_term(self.orchestrator.haiku_query)
+        # if not (memory.memory_dir / ".dedup_done").exists():
+        #     await memory.deduplicate_long_term(self.orchestrator.haiku_query)
+        #     (memory.memory_dir / ".dedup_done").touch()
 
         await self.orchestrator.check_scratch_pad()
         await self.orchestrator.reload_skills()
         await self._check_emails()
         await self._check_bookmark_digest()
+        await self._sweep_wiki()
 
         logger.info("Heartbeat complete")
 
@@ -130,6 +127,8 @@ class Scheduler:
         if task_type == "sub_agent":
             skill = schedule.get("skill", "general")
             result = await self.orchestrator.run_scheduled_task(skill, prompt)
+        elif task_type == "internal":
+            result = await self._run_internal(prompt)
         else:
             result = await self.orchestrator.haiku_query(prompt)
 
@@ -148,6 +147,35 @@ class Scheduler:
                 await self.orchestrator.send_to_user(f"{display}\n\n{result}")
 
         logger.info(f"Schedule {name} completed")
+
+    async def _sweep_wiki(self):
+        """Assign any bookmarks not yet in a wiki topic (e.g. saved via sub-agent)."""
+        try:
+            from agent.knowledge import wiki as wiki_mod
+            n = await wiki_mod.sweep_unassigned(limit=20)
+            if n:
+                logger.info(f"Wiki sweep assigned {n} new bookmark(s) to topics")
+                # Refresh stale articles for affected topics
+                await wiki_mod.drain_dirty(limit=10)
+        except Exception as e:
+            logger.warning(f"Wiki sweep failed: {e}")
+
+    async def _run_internal(self, prompt: str) -> str:
+        """Internal-type schedules: pure-Python jobs, no LLM call by the dispatcher."""
+        if prompt == "__WIKI_MAINTENANCE__":
+            try:
+                from agent.knowledge import wiki as wiki_mod
+                stats = await wiki_mod.run_maintenance()
+                return (
+                    f"Wiki maintenance: {stats.get('topics', 0)} topics, "
+                    f"{stats.get('bookmarks', 0)} bookmarks, "
+                    f"{stats.get('deleted', 0)} deleted, "
+                    f"{stats.get('resynthesized', 0)} articles refreshed."
+                )
+            except Exception as e:
+                logger.exception("Wiki maintenance failed")
+                return f"Error: {e}"
+        return f"Error: unknown internal prompt {prompt!r}"
 
     async def _check_emails(self):
         """Poll for new unseen emails and notify user via Telegram."""
