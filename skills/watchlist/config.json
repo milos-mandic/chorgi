@@ -1,0 +1,7 @@
+{
+  "name": "watchlist",
+  "description": "Things to watch — videos, films, shows, talks (YouTube, IMDB, Vimeo, etc.). User sends a watchable link or asks to 'watch later'. Can list, search, tag, mark watched, and remove watch items. Fetches title, thumbnail, summary, rating, and duration.",
+  "tools": ["Bash", "Read", "Write"],
+  "max_turns": 10,
+  "timeout_seconds": 90
+}

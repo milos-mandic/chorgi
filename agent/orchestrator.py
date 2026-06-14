@@ -13,6 +13,7 @@ from agent.haiku import classify_and_respond
 from agent.spawner import spawn_sub_agent
 from agent.memory import Memory
 from agent import bookmarks
+from agent import watchlist
 
 logger = logging.getLogger(__name__)
 
@@ -363,8 +364,18 @@ class Orchestrator:
         if not urls:
             return None
 
+        # An explicit "watch later" intent in the message routes every link to
+        # the watch list, even links on unknown domains.
+        force_watch = watchlist.has_watch_intent(message)
+
         parts = []
+        added_bookmark = False
         for url in urls:
+            if force_watch or watchlist.is_watchable(url):
+                parts.append(await self._handle_watch_url(url))
+                continue
+            added_bookmark = True
+
             meta = await asyncio.to_thread(bookmarks.fetch_page_meta, url)
             title = meta.get("title") or url
             description = meta.get("description", "")
@@ -392,17 +403,55 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(f"Wiki assignment failed for {url}: {e}")
 
-        # Check digest threshold
+        # Check digest threshold — only when an actual bookmark was added; a
+        # watch-only message shouldn't surface the bookmark digest counter.
         digest_note = ""
-        unsent = bookmarks.get_unsent_bookmarks()
-        if len(unsent) >= 5:
-            digest_result = await self._send_bookmark_digest()
-            if digest_result:
-                digest_note = f"\n\n{digest_result}"
-        else:
-            digest_note = f"\n({len(unsent)}/5 until digest)"
+        if added_bookmark:
+            unsent = bookmarks.get_unsent_bookmarks()
+            if len(unsent) >= 5:
+                digest_result = await self._send_bookmark_digest()
+                if digest_result:
+                    digest_note = f"\n\n{digest_result}"
+            else:
+                digest_note = f"\n({len(unsent)}/5 until digest)"
 
         return "\n\n".join(parts) + digest_note
+
+    async def _handle_watch_url(self, url: str) -> str:
+        """Enrich a watchable link and add it to the watch list. Returns a note line."""
+        meta = await asyncio.to_thread(watchlist.fetch_watch_meta, url)
+        title = meta.get("title") or url
+        description = meta.get("description", "")
+
+        summary_prompt = (
+            f"In 1-2 sentences, say what this is and why it's worth watching.\n"
+            f"Title: {title}\nDescription: {description}\nURL: {url}"
+        )
+        try:
+            summary = await self.haiku_query(summary_prompt)
+        except Exception as e:
+            logger.warning(f"Watch summary failed for {url}: {e}")
+            summary = description or ""
+
+        unwatched = watchlist.add_watch_item(
+            url,
+            title=title,
+            summary=summary,
+            image=meta.get("image", ""),
+            rating=meta.get("rating", ""),
+            duration=meta.get("duration", ""),
+            source=watchlist.source_of(url),
+        )
+        self.memory.append_short_term(f"Added to watch list: {title} — {url}")
+        extra = " · ".join(b for b in (
+            meta.get("rating") and f"★ {meta['rating']}",
+            meta.get("duration"),
+        ) if b)
+        head = f"🎬 Added to your watch list! {title}"
+        if extra:
+            head += f" ({extra})"
+        body = f"\n{summary}" if summary else ""
+        return f"{head}{body}\n({unwatched} to watch)"
 
     async def _send_bookmark_digest(self) -> str | None:
         """Email all unsent bookmarks as a digest. Returns status message or None."""

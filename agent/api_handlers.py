@@ -20,6 +20,7 @@ BASE_DIR = Path(__file__).parent.parent
 # Lazy-loaded skill modules
 _task_cli = None
 _bookmarks_cli = None
+_watchlist_mod = None
 _local_chat = None
 
 # Single lock for all JSON mutations (tasks + bookmarks).
@@ -50,6 +51,14 @@ def _get_bookmarks_cli():
     return _bookmarks_cli
 
 
+def _get_watchlist():
+    global _watchlist_mod
+    if _watchlist_mod is None:
+        from agent import watchlist as wl
+        _watchlist_mod = wl
+    return _watchlist_mod
+
+
 def get_local_chat():
     global _local_chat
     if _local_chat is None:
@@ -73,6 +82,9 @@ def api_get(path: str) -> tuple[int, dict]:
         if path == "/api/bookmarks":
             bc = _get_bookmarks_cli()
             return 200, {"bookmarks": bc.load_bookmarks()}
+        if path == "/api/watchlist":
+            wl = _get_watchlist()
+            return 200, {"watchlist": wl.load_watch_items()}
         if path == "/api/linkedin/calendar":
             return 200, _load_linkedin_calendar()
         if path == "/api/people":
@@ -153,6 +165,28 @@ def api_write(path: str, method: str, body: dict | None, server) -> tuple[int, d
             ok = _delete_bookmark(body["url"])
             return (200 if ok else 404), {"deleted": ok}
 
+        # Watch list
+        if path == "/api/watchlist" and method == "POST":
+            if body is None:
+                return 400, {"error": "bad json"}
+            return 200, _create_watch_item(body)
+
+        if path == "/api/watchlist" and method == "PATCH":
+            if body is None or not body.get("url"):
+                return 400, {"error": "url required"}
+            wl = _get_watchlist()
+            if "where_url" in body:
+                ok = wl.set_where(body["url"], (body.get("where_url") or "").strip())
+            else:
+                ok = wl.set_watched(body["url"], bool(body.get("watched")))
+            return (200 if ok else 404), {"updated": ok}
+
+        if path == "/api/watchlist" and method == "DELETE":
+            if body is None or not body.get("url"):
+                return 400, {"error": "url required"}
+            ok = _delete_watch_item(body["url"])
+            return (200 if ok else 404), {"deleted": ok}
+
         # Inbox accept / reject
         if path.startswith("/api/inbox/") and method == "POST":
             rest = path[len("/api/inbox/"):]
@@ -220,9 +254,11 @@ def api_write(path: str, method: str, body: dict | None, server) -> tuple[int, d
 def _build_state() -> dict:
     tc = _get_task_cli()
     bc = _get_bookmarks_cli()
+    wl = _get_watchlist()
     with _data_lock:
         tasks = tc.load_tasks()
         bookmarks = bc.load_bookmarks()
+        watchlist = wl.load_watch_items()
     people = []
     inbox = []
     try:
@@ -234,6 +270,7 @@ def _build_state() -> dict:
     return {
         "tasks": tasks,
         "bookmarks": bookmarks,
+        "watchlist": watchlist,
         "linkedin_week": _load_linkedin_calendar(),
         "people": people,
         "inbox": inbox,
@@ -379,6 +416,52 @@ def _delete_bookmark(url: str) -> bool:
         if len(bookmarks) == before:
             return False
         bc.save_bookmarks(bookmarks)
+    return True
+
+
+def _create_watch_item(body: dict) -> dict:
+    wl = _get_watchlist()
+    url = (body.get("url") or "").strip()
+    if not url:
+        return {"error": "url required"}
+    tags = body.get("tags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+    # Best-effort enrichment for manual adds (title/image/rating/duration).
+    meta = {}
+    if not body.get("title") or not body.get("image"):
+        try:
+            meta = wl.fetch_watch_meta(url)
+        except Exception as e:
+            logger.warning("Watch enrichment failed for %s: %s", url, e)
+    with _data_lock:
+        wl.add_watch_item(
+            url,
+            title=(body.get("title") or meta.get("title") or "").strip(),
+            summary=(body.get("notes") or meta.get("description") or "").strip(),
+            image=meta.get("image", ""),
+            rating=meta.get("rating", ""),
+            duration=meta.get("duration", ""),
+            source=wl.source_of(url),
+            notes=(body.get("notes") or "").strip(),
+            tags=tags,
+            where_url=(body.get("where_url") or "").strip(),
+        )
+        for it in wl.load_watch_items():
+            if it["url"] == url:
+                return it
+    return {"url": url}
+
+
+def _delete_watch_item(url: str) -> bool:
+    wl = _get_watchlist()
+    with _data_lock, _shared.file_lock(wl.WATCHLIST_FILE):
+        items = wl.load_watch_items()
+        before = len(items)
+        items = [it for it in items if it["url"] != url]
+        if len(items) == before:
+            return False
+        wl.save_watch_items(items)
     return True
 
 

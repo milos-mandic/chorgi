@@ -1,9 +1,11 @@
 // Chorgi dashboard — vanilla JS, polls /api/state every 4s.
 
 const POLL_MS = 4000;
-let state = { tasks: [], bookmarks: [], linkedin_week: {}, people: [], inbox: [] };
+let state = { tasks: [], bookmarks: [], watchlist: [], linkedin_week: {}, people: [], inbox: [] };
 let lastSnapshot = "";
 let bookmarkFilter = "";
+let watchFilter = "";
+let watchShowWatched = false;
 let contactsFilter = "";
 
 // ---------------- Fetch helpers ----------------
@@ -51,6 +53,7 @@ async function poll() {
 function render() {
   renderTasks();
   renderBookmarks();
+  renderWatch();
   renderLinkedIn();
   renderInbox();
   renderContacts();
@@ -75,6 +78,7 @@ function setActivePage(name) {
   // Contextual primary action in the top bar
   document.getElementById("add-task-btn").classList.toggle("hidden", name !== "tasks");
   document.getElementById("add-bookmark-btn").classList.toggle("hidden", name !== "bookmarks");
+  document.getElementById("add-watch-btn").classList.toggle("hidden", name !== "watch");
   if (name === "wiki" && !wikiLoaded) loadWikiTopics();
   if (name === "chat" && !chatLoaded) initChat();
 }
@@ -82,6 +86,7 @@ function setActivePage(name) {
 function renderTabBadges() {
   const pending = (state.tasks || []).filter(t => t.status === "pending").length;
   const bookmarks = (state.bookmarks || []).length;
+  const watch = (state.watchlist || []).filter(w => !w.watched).length;
   const inbox = (state.inbox || []).length;
   const contacts = (state.people || []).length;
   const wiki = wikiTopics.length;
@@ -93,6 +98,7 @@ function renderTabBadges() {
   };
   set("tab-badge-tasks", pending);
   set("tab-badge-bookmarks", bookmarks);
+  set("tab-badge-watch", watch);
   set("tab-badge-inbox", inbox);
   set("tab-badge-contacts", contacts);
   set("tab-badge-wiki", wiki);
@@ -257,6 +263,89 @@ function bookmarkCard(b) {
   return card;
 }
 
+// ---- Watch list ----
+
+function renderWatch() {
+  const container = document.getElementById("watch-grid");
+  if (!container) return;
+  container.innerHTML = "";
+  const q = watchFilter.toLowerCase();
+  let items = state.watchlist || [];
+  if (!watchShowWatched) items = items.filter((w) => !w.watched);
+  if (q) {
+    items = items.filter((w) => {
+      const hay = [w.url, w.title, w.notes, w.summary, w.source, w.where_source, ...(w.tags || [])].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  // Unwatched first, then watched (when shown), each newest-first as stored.
+  items = [...items].sort((a, b) => (a.watched === b.watched) ? 0 : (a.watched ? 1 : -1));
+
+  if (!items.length) {
+    container.appendChild(emptyState("Nothing to watch yet",
+      "Send the bot a YouTube, IMDB, or Vimeo link — or say “watch later” with any link."));
+    return;
+  }
+  for (const w of items) container.appendChild(watchCard(w));
+}
+
+function watchCard(w) {
+  const card = el("div", { class: "watch-card" + (w.watched ? " watched" : "") });
+
+  const thumb = el("a", { class: "watch-thumb", href: w.url, target: "_blank", rel: "noopener" });
+  if (w.image) thumb.appendChild(el("img", { src: w.image, alt: "", loading: "lazy" }));
+  else thumb.appendChild(el("div", { class: "watch-thumb-fallback" }, (w.source || "▶").slice(0, 12)));
+  if (w.duration) thumb.appendChild(el("span", { class: "watch-duration" }, w.duration));
+  card.appendChild(thumb);
+
+  const body = el("div", { class: "watch-body" });
+  body.appendChild(el("a", { class: "watch-title", href: w.url, target: "_blank", rel: "noopener" }, w.title || w.url));
+
+  const meta = el("div", { class: "watch-meta" });
+  if (w.source) meta.appendChild(el("span", { class: "watch-chip" }, w.source));
+  if (w.rating) meta.appendChild(el("span", { class: "watch-chip" }, "★ " + w.rating));
+  for (const tag of (w.tags || [])) meta.appendChild(el("span", { class: "watch-chip tag" }, tag));
+  if (meta.children.length) body.appendChild(meta);
+
+  if (w.summary) body.appendChild(el("div", { class: "watch-summary" }, w.summary));
+  else if (w.notes) body.appendChild(el("div", { class: "watch-summary" }, w.notes));
+
+  if (w.where_url) {
+    body.appendChild(el("a", {
+      class: "watch-where", href: w.where_url, target: "_blank", rel: "noopener",
+    }, "▶ Watch on " + (w.where_source || "link")));
+  }
+
+  const actions = el("div", { class: "actions" });
+  actions.appendChild(el("button", {
+    onclick: async () => {
+      await api("PATCH", "/api/watchlist", { url: w.url, watched: !w.watched });
+      poll();
+    }
+  }, w.watched ? "↺ Unwatch" : "✓ Watched"));
+  actions.appendChild(el("button", {
+    onclick: async () => {
+      const cur = w.where_url || "";
+      const next = prompt("Where to watch link (e.g. Netflix URL). Leave blank to clear:", cur);
+      if (next === null) return;  // cancelled
+      await api("PATCH", "/api/watchlist", { url: w.url, where_url: next.trim() });
+      poll();
+    }
+  }, w.where_url ? "Edit link" : "+ Where"));
+  actions.appendChild(el("button", {
+    class: "danger",
+    onclick: async () => {
+      if (!confirm("Remove from watch list?")) return;
+      await api("DELETE", "/api/watchlist", { url: w.url });
+      poll();
+    }
+  }, "Delete"));
+  body.appendChild(actions);
+
+  card.appendChild(body);
+  return card;
+}
+
 // ---- LinkedIn ----
 
 function renderLinkedIn() {
@@ -321,6 +410,17 @@ function openBookmarkModal() {
 
 function closeBookmarkModal() { document.getElementById("bookmark-modal").classList.add("hidden"); }
 
+function openWatchModal() {
+  document.getElementById("watch-url").value = "";
+  document.getElementById("watch-title").value = "";
+  document.getElementById("watch-where").value = "";
+  document.getElementById("watch-tags").value = "";
+  document.getElementById("watch-notes").value = "";
+  document.getElementById("watch-modal").classList.remove("hidden");
+}
+
+function closeWatchModal() { document.getElementById("watch-modal").classList.add("hidden"); }
+
 // ---------------- Actions ----------------
 
 async function triggerSubagent(skill, task, toastMsg) {
@@ -345,11 +445,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("add-task-btn").addEventListener("click", () => openTaskModal(null));
   document.getElementById("add-bookmark-btn").addEventListener("click", openBookmarkModal);
+  document.getElementById("add-watch-btn").addEventListener("click", openWatchModal);
 
   document.getElementById("task-cancel").addEventListener("click", closeTaskModal);
   document.getElementById("task-modal-x").addEventListener("click", closeTaskModal);
   document.getElementById("bookmark-cancel").addEventListener("click", closeBookmarkModal);
   document.getElementById("bookmark-modal-x").addEventListener("click", closeBookmarkModal);
+  document.getElementById("watch-cancel").addEventListener("click", closeWatchModal);
+  document.getElementById("watch-modal-x").addEventListener("click", closeWatchModal);
 
   // Click on the backdrop closes any modal
   document.querySelectorAll(".modal").forEach((m) => {
@@ -410,9 +513,34 @@ document.addEventListener("DOMContentLoaded", () => {
     renderBookmarks();
   });
 
+  document.getElementById("watch-save").addEventListener("click", async () => {
+    const payload = {
+      url: document.getElementById("watch-url").value,
+      title: document.getElementById("watch-title").value,
+      where_url: document.getElementById("watch-where").value,
+      tags: document.getElementById("watch-tags").value,
+      notes: document.getElementById("watch-notes").value,
+    };
+    try {
+      await api("POST", "/api/watchlist", payload);
+      closeWatchModal();
+      poll();
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  document.getElementById("watch-search").addEventListener("input", (e) => {
+    watchFilter = e.target.value;
+    renderWatch();
+  });
+
+  document.getElementById("watch-show-watched").addEventListener("change", (e) => {
+    watchShowWatched = e.target.checked;
+    renderWatch();
+  });
+
   // Esc closes modals
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { closeTaskModal(); closeBookmarkModal(); closePersonModal(); }
+    if (e.key === "Escape") { closeTaskModal(); closeBookmarkModal(); closeWatchModal(); closePersonModal(); }
   });
 
   const cs = document.getElementById("contacts-search");
@@ -739,6 +867,18 @@ let chatConfigured = false;
 let chatConversations = [];
 let chatActiveId = localStorage.getItem("chorgi.chatActiveId") || null;
 let chatStreaming = false;
+let chatModelLabel = "";
+
+// Each SSE delta from the local server is ~one token; rate is measured from
+// the first delta so prompt processing time is excluded.
+function updateChatSpeed(tokens, firstAt) {
+  if (tokens < 2) return;
+  const secs = (performance.now() - firstAt) / 1000;
+  if (secs <= 0) return;
+  const tps = (tokens - 1) / secs;
+  document.getElementById("chat-model").textContent =
+    chatModelLabel + " · " + tps.toFixed(1) + " tok/s";
+}
 
 async function initChat() {
   chatLoaded = true;
@@ -746,9 +886,10 @@ async function initChat() {
     const cfg = await api("GET", "/api/chat/config");
     chatConfigured = !!cfg.configured;
     const modelEl = document.getElementById("chat-model");
-    modelEl.textContent = chatConfigured
+    chatModelLabel = chatConfigured
       ? "model: " + cfg.model
       : "Local LLM not configured — set LOCAL_LLM_BASE_URL and LOCAL_LLM_MODEL in secrets.env";
+    modelEl.textContent = chatModelLabel;
     setChatComposerEnabled(chatConfigured);
   } catch (e) {
     toast("Chat config failed: " + e.message, "error");
@@ -896,6 +1037,8 @@ async function sendChatMessage() {
   setChatComposerEnabled(true);
 
   let acc = "";
+  let tokenCount = 0;
+  let firstTokenAt = 0;
   try {
     const r = await fetch("/api/chat/conversations/" + chatActiveId + "/messages", {
       method: "POST",
@@ -921,7 +1064,12 @@ async function sendChatMessage() {
         let obj;
         try { obj = JSON.parse(data); } catch { continue; }
         if (obj.error) { toast("LLM error: " + obj.error, "error"); acc += "\n\n_(error: " + obj.error + ")_"; }
-        else if (obj.delta) { acc += obj.delta; }
+        else if (obj.delta) {
+          acc += obj.delta;
+          tokenCount++;
+          if (tokenCount === 1) firstTokenAt = performance.now();
+          else updateChatSpeed(tokenCount, firstTokenAt);
+        }
         assistant.innerHTML = renderMarkdown(acc);
         box.scrollTop = box.scrollHeight;
       }

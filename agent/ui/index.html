@@ -33,6 +33,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           Add bookmark
         </button>
+        <button id="add-watch-btn" class="primary action-btn hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add to watch
+        </button>
       </div>
     </div>
 
@@ -46,6 +50,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         <span class="tab-label">Bookmarks</span>
         <span class="tab-badge" id="tab-badge-bookmarks">0</span>
+      </button>
+      <button class="tab" data-page="watch">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+        <span class="tab-label">Watch</span>
+        <span class="tab-badge" id="tab-badge-watch">0</span>
       </button>
       <button class="tab" data-page="wiki">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
@@ -107,6 +116,21 @@
         </div>
       </div>
       <div class="bookmark-groups" id="bookmark-groups"></div>
+    </section>
+
+    <!-- Watch list -->
+    <section class="board-section page" id="watch-section" data-page="watch">
+      <div class="section-head">
+        <h2>Watch</h2>
+        <div class="section-tools">
+          <label class="watch-toggle"><input type="checkbox" id="watch-show-watched"> Show watched</label>
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input type="search" id="watch-search" placeholder="Search watch list…">
+          </div>
+        </div>
+      </div>
+      <div class="watch-grid" id="watch-grid"></div>
     </section>
 
     <!-- Inbox (agent proposals) -->
@@ -261,6 +285,28 @@
         <span class="modal-actions-spacer"></span>
         <button id="bookmark-cancel">Cancel</button>
         <button id="bookmark-save" class="primary">Save bookmark</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Watch modal -->
+  <div class="modal hidden" id="watch-modal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Add to watch list</h3>
+        <button class="icon-btn modal-x" id="watch-modal-x" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <label>URL <input type="url" id="watch-url" autocomplete="off" placeholder="https://youtube.com/… or IMDB"></label>
+      <label>Title <input type="text" id="watch-title" placeholder="Optional — fetched if blank"></label>
+      <label>Where to watch <input type="url" id="watch-where" placeholder="Optional — e.g. a Netflix link"></label>
+      <label>Tags <input type="text" id="watch-tags" placeholder="comma, separated"></label>
+      <label>Notes <textarea id="watch-notes" rows="2" placeholder="Why do you want to watch this?"></textarea></label>
+      <div class="modal-actions">
+        <span class="modal-actions-spacer"></span>
+        <button id="watch-cancel">Cancel</button>
+        <button id="watch-save" class="primary">Save</button>
       </div>
     </div>
   </div>
