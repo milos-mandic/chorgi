@@ -8,13 +8,14 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-# Keep in sync with skills/tasks/task_cli.py:_parse_scheduled_at
-LOCAL_TZ = ZoneInfo("Europe/Berlin")
-
-# Add skill directory to path for local imports
+# Add skill directory + skills/ root to path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _shared  # noqa: E402
+
+# Single source of truth for the user's timezone (defined in skills/_shared.py).
+LOCAL_TZ = _shared.LOCAL_TZ
 
 # Load secrets.env if env vars aren't already set (direct CLI invocation)
 _SECRETS_PATH = Path(__file__).resolve().parent.parent.parent / ".personal" / "secrets.env"

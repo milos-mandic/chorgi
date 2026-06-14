@@ -61,15 +61,19 @@ If a task requires MULTIPLE skills, list them all — they run in parallel.
 CRITICAL ROUTING RULES (apply before picking skills):
 1. Any actionable to-do the user wants tracked ("add a task", "remind me to X",
    "I need to do X", "move/reschedule X", confirmations like "add it", "yes do it"
-   in response to a proposed task) MUST include the "tasks" skill.
-2. If that same to-do also has a specific date or time ("tomorrow at 3pm",
-   "Tuesday evening", "May 26 at 20:00", "next Friday"), ALSO include the
-   "calendar" skill in the SAME sub_agent call (multi-skill form).
-3. Pure calendar events with no follow-up action (meetings, appointments others
-   invited you to, blocks like "lunch with Sara") → calendar only.
-4. When the prior turn referenced a task and the user replies "add it" / "yes" /
-   "do it", treat that as task creation per rule 1 (and rule 2 if a time was
-   mentioned anywhere in the recent turns).
+   in response to a proposed task) routes to the "tasks" skill ALONE. The tasks
+   skill owns BOTH the to-do AND any calendar placement — do NOT also add the
+   "calendar" skill for a to-do.
+2. A to-do WITH a specific date AND time ("tomorrow at 3pm", "Tuesday evening",
+   "May 26 at 20:00", "next Friday at 9") STILL routes to "tasks" ONLY. The tasks
+   skill creates the calendar event itself in one step. Resolve the date/time to
+   an ABSOLUTE date using the current date/time at the top of the context, and
+   put that absolute date/time in the summary.
+3. Pure calendar events with NO follow-up to-do (meetings, appointments others
+   invited you to, blocks like "lunch with Sara") → "calendar" skill only.
+4. When the prior turn referenced a proposed task and the user replies "add it" /
+   "yes" / "do it", treat that as task creation per rule 1 (tasks only; include
+   any time mentioned in recent turns as an absolute date/time in the summary).
 
 Route "schedule": the user wants to create a RECURRING or REPEATING task
 (e.g., "every morning", "daily", "weekly", "every 2 hours"). One-time tasks,

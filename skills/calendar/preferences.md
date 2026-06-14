@@ -1,14 +1,18 @@
 # Scheduling Preferences
 
 ## Working Hours
-- Weekdays: 5:30 PM - 10:00 PM
+- Weekdays: 9:00 AM - 6:00 PM
 - Weekends: Fully available
 
-## Task Type Preferences
-- Deep work / coding / creative: Evening (8:00 PM - 10:00 PM)
-- Meetings / calls: Afternoon (5:30 PM - 10:00 PM)
-- Admin / emails / light tasks: End of day (5:30 PM - 8:00 PM)
-- Exercise / personal: Early morning
+These are the hours you are *at work*. The task auto-planner uses them to decide
+which free calendar gaps each task may fill, based on the task's time class.
+
+## Task Time Classes
+The auto-planner fills any free gap on the calendar, but a task's time class
+narrows which gaps qualify. The exact time always depends on real availability.
+- anytime (default): any free slot 8:00 AM - 10:00 PM, any day — calls, quick/flexible tasks.
+- work_hours: weekdays within working hours only — banks, offices, anything needing a business open.
+- off_hours: weekday evenings (after working hours, until 10:00 PM) + all weekend — errands, chores, personal admin, exercise.
 
 ## Defaults
 - Default task duration: 60 minutes

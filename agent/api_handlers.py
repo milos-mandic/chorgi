@@ -336,6 +336,7 @@ def _create_task(body: dict) -> dict:
             "deadline": body.get("deadline"),
             "tags": tags,
             "status": body.get("status", "pending") or "pending",
+            "time_class": body.get("time_class") or "anytime",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "carry_count": 0,
         }
@@ -346,6 +347,8 @@ def _create_task(body: dict) -> dict:
                 task["scheduled_at"] = result["scheduled_at"]
                 task["calendar_event_id"] = result["event_id"]
             else:
+                # Keep pending but remember the requested time (mirrors task_cli).
+                task["requested_at"] = scheduled_at
                 task["_calendar_warning"] = result.get("error", "calendar create failed")
         tasks.insert(0, task)
         tc.save_tasks(tasks)
@@ -354,7 +357,7 @@ def _create_task(body: dict) -> dict:
 
 _TASK_FIELDS = {"title", "notes", "priority", "estimated_minutes",
                 "deadline", "tags", "status", "carry_count",
-                "scheduled_at", "calendar_event_id"}
+                "scheduled_at", "calendar_event_id", "time_class"}
 
 
 def _update_task(task_id: str, body: dict) -> dict | None:

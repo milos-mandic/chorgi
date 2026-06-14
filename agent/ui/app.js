@@ -173,6 +173,7 @@ function taskCard(t) {
   if (t.deadline) meta.appendChild(el("span", {}, "📅 " + t.deadline));
   if (t.estimated_minutes) meta.appendChild(el("span", {}, t.estimated_minutes + "m"));
   if (t.carry_count > 0) meta.appendChild(el("span", {}, "↩ " + t.carry_count));
+  if (t.time_class && t.time_class !== "anytime") meta.appendChild(el("span", {}, "🕑 " + t.time_class));
   for (const tag of (t.tags || [])) {
     meta.appendChild(el("span", { class: "tag" }, tag));
   }
@@ -500,6 +501,7 @@ function openTaskModal(t) {
   document.getElementById("task-notes").value = t?.notes || "";
   document.getElementById("task-priority").value = t?.priority || "medium";
   document.getElementById("task-status").value = t?.status || "pending";
+  document.getElementById("task-time-class").value = t?.time_class || "anytime";
   document.getElementById("task-estimate").value = t?.estimated_minutes || "";
   document.getElementById("task-deadline").value = t?.deadline || "";
   document.getElementById("task-scheduled-at").value = t?.scheduled_at ? t.scheduled_at.slice(0, 16) : "";
@@ -593,6 +595,7 @@ document.addEventListener("DOMContentLoaded", () => {
       notes: document.getElementById("task-notes").value,
       priority: document.getElementById("task-priority").value,
       status: document.getElementById("task-status").value,
+      time_class: document.getElementById("task-time-class").value,
       estimated_minutes: parseInt(document.getElementById("task-estimate").value, 10) || null,
       deadline: document.getElementById("task-deadline").value || null,
       scheduled_at: (() => {

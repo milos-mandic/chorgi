@@ -4,8 +4,14 @@ import hashlib
 import json
 import logging
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Shared helpers live under skills/ (the one module both the harness and the
+# skill CLIs import). Add it explicitly rather than relying on import order.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills"))
+import _shared  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +37,7 @@ class Memory:
 
     def get_haiku_context(self) -> str:
         """Lightweight context for Haiku classification: identity + context + recent short-term."""
-        parts = []
+        parts = [_shared.now_context_line()]
         for name in ("identity.md", "context.md"):
             text = self._read_file(self.personal_dir / name)
             if text:
@@ -46,7 +52,7 @@ class Memory:
 
     def get_full_context(self) -> str:
         """Full context for sub-agents: identity + context + long-term + short-term."""
-        parts = []
+        parts = [_shared.now_context_line()]
         for name in ("identity.md", "context.md"):
             text = self._read_file(self.personal_dir / name)
             if text:

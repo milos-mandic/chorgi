@@ -21,7 +21,8 @@ Run commands via Bash — all operations go through `task_cli.py`.
 - Estimate: minutes (integer)
 - Deadline: `YYYY-MM-DD` format — a constraint ("must be done by"), not a calendar placement
 - Tags: comma-separated
-- `--scheduled-at "YYYY-MM-DD HH:MM"` (Europe/Berlin) — schedule the task immediately. Creates a calendar event on the bot calendar with the owner invited, and stores the task with `status=scheduled`. Use this when the user gives a concrete date AND time.
+- `--time-class {anytime,work_hours,off_hours}` — when the auto-planner is allowed to place this task (see "Time classes" below). Default `anytime`.
+- `--scheduled-at "YYYY-MM-DD HH:MM"` (Europe/Berlin) — schedule the task immediately. Creates a calendar event on the bot calendar (titled `Task: <title>`, owner invited) and stores the task with `status=scheduled`. Use this when the user gives a concrete date AND time. The value must be an **absolute** date/time — resolve relative phrasing ("tomorrow", "next Friday") yourself using the "Current date/time" line at the top of your context.
 
 ### List tasks
 ```bash
@@ -65,8 +66,10 @@ Run commands via Bash — all operations go through `task_cli.py`.
 - "Coffee with Maria Wednesday 10am" → title "Coffee with Maria", `--scheduled-at "<that Wednesday date> 10:00"` — this also creates a calendar event.
 - If the user mentions context like "for the house" or "work stuff", capture in tags/notes.
 
+**This skill owns task scheduling.** Never ask for or rely on the calendar skill to place a to-do — `--scheduled-at` and `schedule-batch` create the calendar events themselves. (The calendar skill is only for standalone events that aren't to-dos.) Every event this skill creates is titled `Task: <title>` and is linked back to the task via its stored `calendar_event_id`, so it can be edited/deleted in one place.
+
 **Pending vs scheduled:**
-- If the user gives a specific date AND time → use `--scheduled-at`. The task lands in Scheduled and a calendar event is created in one step.
+- If the user gives a specific date AND time → use `--scheduled-at` with an absolute date/time. The task lands in Scheduled and a single calendar event is created in one step.
 - If the user gives only a date (no time) → use `--deadline`. The task stays Pending; the nightly planner will place it on the calendar.
 - If no date/time at all → omit both. Task is Pending.
 
@@ -74,8 +77,20 @@ Run commands via Bash — all operations go through `task_cli.py`.
 
 **When completing/removing:** Confirm the action with the task title.
 
+**Time classes (pick when it makes sense for the task):**
+Every task carries a `time_class` that tells the auto-planner which free calendar gaps are acceptable. The exact time always comes from real availability — the class only narrows *which* free slots qualify. Infer it from the task's nature:
+- `anytime` (default) — any free slot, day or night (08:00–22:00), any day. Use for calls, phone, messages, quick or flexible work that fits between meetings.
+- `work_hours` — Mon–Fri 09:00–18:00 only. Use when the task needs businesses/offices open on a weekday (banks, calling a company, government, deliveries, appointments).
+- `off_hours` — weekday evenings (18:00–22:00) + all weekend. Use for errands, chores, personal admin, gym/exercise — things you do on your own time, not during the workday.
+
+Examples:
+- "Call the dentist" → `--time-class anytime` (a call fits anywhere).
+- "Buy groceries" / "Cancel the gym membership in person" → `--time-class off_hours`.
+- "Call the bank about the wire" → `--time-class work_hours` (bank must be open on a weekday).
+If unsure, omit it (defaults to `anytime`).
+
 **When scheduling tasks into the calendar:**
-Use the built-in batch scheduler — it respects allowed time windows (weekday evenings 17:30-22:00 CET, full weekends) and handles priority ordering, buffers, and conflict detection automatically.
+Use the built-in batch scheduler — it places each task only in free gaps its `time_class` allows, and handles priority ordering, buffers, and conflict detection automatically.
 ```bash
 /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py schedule-batch --days 2        # schedule into next 2 days
 /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py schedule-batch --days 3        # or 3 days, etc.

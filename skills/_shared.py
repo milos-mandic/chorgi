@@ -19,7 +19,32 @@ import fcntl
 import json
 import os
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# Single source of truth for the user's local timezone. Both skill CLIs
+# (task_cli.py, calendar_cli.py) and the agent process import this so the
+# zone is defined exactly once instead of hardcoded in several places.
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
+
+
+def now_local() -> datetime:
+    """Current time as a timezone-aware datetime in LOCAL_TZ."""
+    return datetime.now(LOCAL_TZ)
+
+
+def now_context_line() -> str:
+    """A single line stating the current date/time, for LLM context.
+
+    Injected at the top of router and sub-agent context so relative dates
+    ("tomorrow", "next Friday", "3pm") resolve against a real anchor.
+    """
+    local = now_local()
+    return (
+        f"Current date/time: {local.strftime('%A %Y-%m-%d %H:%M')} "
+        f"({local.tzname()}, {local.isoformat()})"
+    )
 
 
 def load_json(path, default=None, *, tolerant=False):
