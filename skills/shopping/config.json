@@ -1,0 +1,7 @@
+{
+  "name": "shopping",
+  "description": "Shopping list — products the user wants to buy. User sends a product/store link or says things like 'add to my shopping list', 'I want to buy this', 'add to my wishlist', or 'put this on the list'. Saves the item with auto-fetched price, image, and category. Can list, search, update price, mark bought, and remove items.",
+  "tools": ["Bash", "Read", "Write"],
+  "max_turns": 10,
+  "timeout_seconds": 90
+}

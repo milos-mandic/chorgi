@@ -613,6 +613,91 @@ main.board {
   .watch-card:hover .actions { display: flex; }
 }
 
+/* ---------------- Shopping list ---------------- */
+
+.shopping-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.shopping-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.shopping-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.shopping-card.bought { opacity: 0.55; }
+.shopping-thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-2);
+}
+.shopping-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shopping-thumb-fallback {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 13px; text-transform: capitalize;
+}
+.shopping-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.shopping-title {
+  color: var(--link); font-weight: 600; font-size: 13.5px;
+  text-decoration: none; line-height: 1.3; word-break: break-word;
+}
+.shopping-title:hover { text-decoration: underline; }
+.shopping-price {
+  font-size: 16px; font-weight: 700; color: var(--accent);
+  letter-spacing: -0.01em;
+}
+.shopping-card.bought .shopping-price { text-decoration: line-through; }
+.shopping-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.shopping-chip {
+  font-size: 10.5px; font-weight: 600;
+  color: var(--muted); background: var(--surface-2);
+  padding: 1px 7px; border-radius: 999px; text-transform: capitalize;
+}
+.shopping-chip.cat {
+  color: var(--accent-text); background: var(--accent);
+}
+.shopping-summary { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.shopping-card .actions { display: flex; margin-top: 2px; gap: 4px; flex-wrap: wrap; }
+.shopping-card .actions button { font-size: 11px; padding: 2px 9px; box-shadow: none; }
+@media (hover: hover) {
+  .shopping-card .actions { display: none; }
+  .shopping-card:hover .actions { display: flex; }
+}
+
+/* Sort + price range (Shopping section tools) */
+.sort-select {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+}
+.sort-select select {
+  padding: 4px 6px; font-size: 12.5px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.sort-select select:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.price-filter { display: inline-flex; align-items: center; gap: 5px; }
+.price-filter input {
+  width: 68px; padding: 5px 8px;
+  font-size: 12.5px; text-align: right;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+}
+.price-filter input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.price-filter-dash { color: var(--muted); font-size: 12px; }
+
+/* Modal price + currency row */
+.field-row { display: flex; gap: 10px; }
+.field-row label { flex: 1; }
+.field-row .field-currency { flex: 0 0 40%; }
+.modal-hint { margin: -2px 0 4px; font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+
 /* ---------------- LinkedIn ---------------- */
 
 .linkedin-week {

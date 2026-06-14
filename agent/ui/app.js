@@ -1,11 +1,16 @@
 // Chorgi dashboard — vanilla JS, polls /api/state every 4s.
 
 const POLL_MS = 4000;
-let state = { tasks: [], bookmarks: [], watchlist: [], linkedin_week: {}, people: [], inbox: [] };
+let state = { tasks: [], bookmarks: [], watchlist: [], shopping: [], linkedin_week: {}, people: [], inbox: [] };
 let lastSnapshot = "";
 let bookmarkFilter = "";
 let watchFilter = "";
 let watchShowWatched = false;
+let shoppingFilter = "";
+let shoppingShowBought = false;
+let shoppingMinPrice = null;
+let shoppingMaxPrice = null;
+let shoppingSort = "newest";
 let contactsFilter = "";
 
 // ---------------- Fetch helpers ----------------
@@ -54,6 +59,7 @@ function render() {
   renderTasks();
   renderBookmarks();
   renderWatch();
+  renderShopping();
   renderLinkedIn();
   renderInbox();
   renderContacts();
@@ -79,6 +85,7 @@ function setActivePage(name) {
   document.getElementById("add-task-btn").classList.toggle("hidden", name !== "tasks");
   document.getElementById("add-bookmark-btn").classList.toggle("hidden", name !== "bookmarks");
   document.getElementById("add-watch-btn").classList.toggle("hidden", name !== "watch");
+  document.getElementById("add-shopping-btn").classList.toggle("hidden", name !== "shopping");
   if (name === "wiki" && !wikiLoaded) loadWikiTopics();
   if (name === "chat" && !chatLoaded) initChat();
 }
@@ -87,6 +94,7 @@ function renderTabBadges() {
   const pending = (state.tasks || []).filter(t => t.status === "pending").length;
   const bookmarks = (state.bookmarks || []).length;
   const watch = (state.watchlist || []).filter(w => !w.watched).length;
+  const shopping = (state.shopping || []).filter(s => !s.bought).length;
   const inbox = (state.inbox || []).length;
   const contacts = (state.people || []).length;
   const wiki = wikiTopics.length;
@@ -99,6 +107,7 @@ function renderTabBadges() {
   set("tab-badge-tasks", pending);
   set("tab-badge-bookmarks", bookmarks);
   set("tab-badge-watch", watch);
+  set("tab-badge-shopping", shopping);
   set("tab-badge-inbox", inbox);
   set("tab-badge-contacts", contacts);
   set("tab-badge-wiki", wiki);
@@ -346,6 +355,107 @@ function watchCard(w) {
   return card;
 }
 
+// ---- Shopping list ----
+
+const CURRENCY_SYMBOLS = { USD: "$", EUR: "€", GBP: "£", JPY: "¥" };
+
+function formatPrice(amount, currency) {
+  if (amount === null || amount === undefined || amount === "") return "—";
+  const sym = CURRENCY_SYMBOLS[currency];
+  const n = Number(amount);
+  const num = Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : amount;
+  return sym ? sym + num : num + " " + (currency || "");
+}
+
+function renderShopping() {
+  const container = document.getElementById("shopping-grid");
+  if (!container) return;
+  container.innerHTML = "";
+  const q = shoppingFilter.toLowerCase();
+  let items = state.shopping || [];
+  if (!shoppingShowBought) items = items.filter((s) => !s.bought);
+  if (q) {
+    items = items.filter((s) => {
+      const hay = [s.url, s.title, s.notes, s.source, s.currency, s.category, ...(s.tags || [])].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  // Price range — items without a price are hidden while either bound is active.
+  if (shoppingMinPrice !== null) items = items.filter((s) => typeof s.amount === "number" && s.amount >= shoppingMinPrice);
+  if (shoppingMaxPrice !== null) items = items.filter((s) => typeof s.amount === "number" && s.amount <= shoppingMaxPrice);
+  // Un-bought items always group above bought ones; the chosen sort orders
+  // within each group. "newest" keeps stored order (newest-first) via stable sort.
+  const amt = (s, fallback) => (typeof s.amount === "number" ? s.amount : fallback);
+  const within = {
+    newest: () => 0,
+    "price-asc": (a, b) => amt(a, Infinity) - amt(b, Infinity),   // no price → last
+    "price-desc": (a, b) => amt(b, -Infinity) - amt(a, -Infinity),  // no price → last
+    name: (a, b) => (a.title || a.url).localeCompare(b.title || b.url),
+  }[shoppingSort] || (() => 0);
+  items = [...items].sort((a, b) =>
+    (a.bought === b.bought) ? within(a, b) : (a.bought ? 1 : -1));
+
+  if (!items.length) {
+    const filtered = q || shoppingMinPrice !== null || shoppingMaxPrice !== null;
+    container.appendChild(filtered
+      ? emptyState("No matches", "No items match the current search or price filter.")
+      : emptyState("Nothing on the list yet", "Click “Add item”, paste a product link, and set a price."));
+    return;
+  }
+  for (const s of items) container.appendChild(shoppingCard(s));
+}
+
+function shoppingCard(s) {
+  const card = el("div", { class: "shopping-card" + (s.bought ? " bought" : "") });
+
+  const thumb = el("a", { class: "shopping-thumb", href: s.url, target: "_blank", rel: "noopener" });
+  if (s.image) thumb.appendChild(el("img", { src: s.image, alt: "", loading: "lazy" }));
+  else thumb.appendChild(el("div", { class: "shopping-thumb-fallback" }, (s.source || "🛒").slice(0, 12)));
+  card.appendChild(thumb);
+
+  const body = el("div", { class: "shopping-body" });
+  body.appendChild(el("a", { class: "shopping-title", href: s.url, target: "_blank", rel: "noopener" }, s.title || s.url));
+
+  body.appendChild(el("div", { class: "shopping-price" }, formatPrice(s.amount, s.currency)));
+
+  const meta = el("div", { class: "shopping-meta" });
+  if (s.category) meta.appendChild(el("span", { class: "shopping-chip cat" }, s.category));
+  if (s.source) meta.appendChild(el("span", { class: "shopping-chip" }, s.source));
+  for (const tag of (s.tags || [])) meta.appendChild(el("span", { class: "shopping-chip tag" }, tag));
+  if (meta.children.length) body.appendChild(meta);
+
+  if (s.notes) body.appendChild(el("div", { class: "shopping-summary" }, s.notes));
+
+  const actions = el("div", { class: "actions" });
+  actions.appendChild(el("button", {
+    onclick: async () => {
+      await api("PATCH", "/api/shopping", { url: s.url, bought: !s.bought });
+      poll();
+    }
+  }, s.bought ? "↺ Unbuy" : "✓ Bought"));
+  actions.appendChild(el("button", {
+    onclick: async () => {
+      const cur = (s.amount === null || s.amount === undefined) ? "" : String(s.amount);
+      const next = prompt("Price amount (number). Leave blank to clear:", cur);
+      if (next === null) return;  // cancelled
+      await api("PATCH", "/api/shopping", { url: s.url, amount: next.trim(), currency: s.currency || "EUR" });
+      poll();
+    }
+  }, "Edit price"));
+  actions.appendChild(el("button", {
+    class: "danger",
+    onclick: async () => {
+      if (!confirm("Remove from shopping list?")) return;
+      await api("DELETE", "/api/shopping", { url: s.url });
+      poll();
+    }
+  }, "Delete"));
+  body.appendChild(actions);
+
+  card.appendChild(body);
+  return card;
+}
+
 // ---- LinkedIn ----
 
 function renderLinkedIn() {
@@ -421,6 +531,18 @@ function openWatchModal() {
 
 function closeWatchModal() { document.getElementById("watch-modal").classList.add("hidden"); }
 
+function openShoppingModal() {
+  document.getElementById("shopping-url").value = "";
+  document.getElementById("shopping-title").value = "";
+  document.getElementById("shopping-amount").value = "";
+  document.getElementById("shopping-currency").value = "EUR";
+  document.getElementById("shopping-tags").value = "";
+  document.getElementById("shopping-notes").value = "";
+  document.getElementById("shopping-modal").classList.remove("hidden");
+}
+
+function closeShoppingModal() { document.getElementById("shopping-modal").classList.add("hidden"); }
+
 // ---------------- Actions ----------------
 
 async function triggerSubagent(skill, task, toastMsg) {
@@ -446,6 +568,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("add-task-btn").addEventListener("click", () => openTaskModal(null));
   document.getElementById("add-bookmark-btn").addEventListener("click", openBookmarkModal);
   document.getElementById("add-watch-btn").addEventListener("click", openWatchModal);
+  document.getElementById("add-shopping-btn").addEventListener("click", openShoppingModal);
 
   document.getElementById("task-cancel").addEventListener("click", closeTaskModal);
   document.getElementById("task-modal-x").addEventListener("click", closeTaskModal);
@@ -453,6 +576,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("bookmark-modal-x").addEventListener("click", closeBookmarkModal);
   document.getElementById("watch-cancel").addEventListener("click", closeWatchModal);
   document.getElementById("watch-modal-x").addEventListener("click", closeWatchModal);
+  document.getElementById("shopping-cancel").addEventListener("click", closeShoppingModal);
+  document.getElementById("shopping-modal-x").addEventListener("click", closeShoppingModal);
 
   // Click on the backdrop closes any modal
   document.querySelectorAll(".modal").forEach((m) => {
@@ -538,9 +663,47 @@ document.addEventListener("DOMContentLoaded", () => {
     renderWatch();
   });
 
+  document.getElementById("shopping-save").addEventListener("click", async () => {
+    const payload = {
+      url: document.getElementById("shopping-url").value,
+      title: document.getElementById("shopping-title").value,
+      amount: document.getElementById("shopping-amount").value,
+      currency: document.getElementById("shopping-currency").value,
+      tags: document.getElementById("shopping-tags").value,
+      notes: document.getElementById("shopping-notes").value,
+    };
+    try {
+      await api("POST", "/api/shopping", payload);
+      closeShoppingModal();
+      poll();
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  document.getElementById("shopping-search").addEventListener("input", (e) => {
+    shoppingFilter = e.target.value;
+    renderShopping();
+  });
+
+  document.getElementById("shopping-show-bought").addEventListener("change", (e) => {
+    shoppingShowBought = e.target.checked;
+    renderShopping();
+  });
+
+  const onPriceBound = (setter) => (e) => {
+    const v = parseFloat(e.target.value);
+    setter(Number.isFinite(v) ? v : null);
+    renderShopping();
+  };
+  document.getElementById("shopping-min-price").addEventListener("input", onPriceBound((v) => shoppingMinPrice = v));
+  document.getElementById("shopping-max-price").addEventListener("input", onPriceBound((v) => shoppingMaxPrice = v));
+  document.getElementById("shopping-sort").addEventListener("change", (e) => {
+    shoppingSort = e.target.value;
+    renderShopping();
+  });
+
   // Esc closes modals
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { closeTaskModal(); closeBookmarkModal(); closeWatchModal(); closePersonModal(); }
+    if (e.key === "Escape") { closeTaskModal(); closeBookmarkModal(); closeWatchModal(); closeShoppingModal(); closePersonModal(); }
   });
 
   const cs = document.getElementById("contacts-search");

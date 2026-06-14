@@ -75,3 +75,8 @@ async def call_haiku(system: str, messages: list[dict], max_tokens: int = 512) -
     return await asyncio.to_thread(
         _call_messages_sync, system, messages, max_tokens, "claude-haiku-4-5-20251001"
     )
+
+
+def call_haiku_sync(system: str, messages: list[dict], max_tokens: int = 512) -> tuple[str, dict]:
+    """Blocking Haiku call for non-async callers (e.g. the webhook server thread)."""
+    return _call_messages_sync(system, messages, max_tokens, "claude-haiku-4-5-20251001")

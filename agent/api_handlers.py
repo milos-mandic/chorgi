@@ -21,6 +21,7 @@ BASE_DIR = Path(__file__).parent.parent
 _task_cli = None
 _bookmarks_cli = None
 _watchlist_mod = None
+_shopping_mod = None
 _local_chat = None
 
 # Single lock for all JSON mutations (tasks + bookmarks).
@@ -59,6 +60,14 @@ def _get_watchlist():
     return _watchlist_mod
 
 
+def _get_shopping():
+    global _shopping_mod
+    if _shopping_mod is None:
+        from agent import shopping as sl
+        _shopping_mod = sl
+    return _shopping_mod
+
+
 def get_local_chat():
     global _local_chat
     if _local_chat is None:
@@ -85,6 +94,9 @@ def api_get(path: str) -> tuple[int, dict]:
         if path == "/api/watchlist":
             wl = _get_watchlist()
             return 200, {"watchlist": wl.load_watch_items()}
+        if path == "/api/shopping":
+            sl = _get_shopping()
+            return 200, {"shopping": sl.load_items()}
         if path == "/api/linkedin/calendar":
             return 200, _load_linkedin_calendar()
         if path == "/api/people":
@@ -187,6 +199,29 @@ def api_write(path: str, method: str, body: dict | None, server) -> tuple[int, d
             ok = _delete_watch_item(body["url"])
             return (200 if ok else 404), {"deleted": ok}
 
+        # Shopping list
+        if path == "/api/shopping" and method == "POST":
+            if body is None:
+                return 400, {"error": "bad json"}
+            return 200, _create_shopping_item(body)
+
+        if path == "/api/shopping" and method == "PATCH":
+            if body is None or not body.get("url"):
+                return 400, {"error": "url required"}
+            sl = _get_shopping()
+            if "amount" in body or "currency" in body:
+                ok = sl.set_price(body["url"], sl.parse_amount(body.get("amount")),
+                                  (body.get("currency") or "").strip())
+            else:
+                ok = sl.set_bought(body["url"], bool(body.get("bought")))
+            return (200 if ok else 404), {"updated": ok}
+
+        if path == "/api/shopping" and method == "DELETE":
+            if body is None or not body.get("url"):
+                return 400, {"error": "url required"}
+            ok = _delete_shopping_item(body["url"])
+            return (200 if ok else 404), {"deleted": ok}
+
         # Inbox accept / reject
         if path.startswith("/api/inbox/") and method == "POST":
             rest = path[len("/api/inbox/"):]
@@ -255,10 +290,12 @@ def _build_state() -> dict:
     tc = _get_task_cli()
     bc = _get_bookmarks_cli()
     wl = _get_watchlist()
+    sl = _get_shopping()
     with _data_lock:
         tasks = tc.load_tasks()
         bookmarks = bc.load_bookmarks()
         watchlist = wl.load_watch_items()
+        shopping = sl.load_items()
     people = []
     inbox = []
     try:
@@ -271,6 +308,7 @@ def _build_state() -> dict:
         "tasks": tasks,
         "bookmarks": bookmarks,
         "watchlist": watchlist,
+        "shopping": shopping,
         "linkedin_week": _load_linkedin_calendar(),
         "people": people,
         "inbox": inbox,
@@ -462,6 +500,43 @@ def _delete_watch_item(url: str) -> bool:
         if len(items) == before:
             return False
         wl.save_watch_items(items)
+    return True
+
+
+def _create_shopping_item(body: dict) -> dict:
+    """Create a shopping item, auto-filling title/image/price/category from the link.
+
+    Enrichment policy (caller values win, blanks scraped/categorized) lives in
+    agent.shopping.add_from_url so the dashboard and the skill CLI stay identical.
+    """
+    sl = _get_shopping()
+    url = (body.get("url") or "").strip()
+    if not url:
+        return {"error": "url required"}
+    user_tags = body.get("tags") or []
+    if isinstance(user_tags, str):
+        user_tags = [t.strip() for t in user_tags.split(",") if t.strip()]
+    with _data_lock:
+        return sl.add_from_url(
+            url,
+            title=(body.get("title") or "").strip(),
+            amount=sl.parse_amount(body.get("amount")),
+            currency=(body.get("currency") or "").strip(),
+            notes=(body.get("notes") or "").strip(),
+            tags=user_tags or None,
+            image=(body.get("image") or "").strip(),
+        )
+
+
+def _delete_shopping_item(url: str) -> bool:
+    sl = _get_shopping()
+    with _data_lock, _shared.file_lock(sl.SHOPPING_FILE):
+        items = sl.load_items()
+        before = len(items)
+        items = [it for it in items if it["url"] != url]
+        if len(items) == before:
+            return False
+        sl.save_items(items)
     return True
 
 
