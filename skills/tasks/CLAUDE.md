@@ -21,8 +21,7 @@ Run commands via Bash — all operations go through `task_cli.py`.
 - Estimate: minutes (integer)
 - Deadline: `YYYY-MM-DD` format — a constraint ("must be done by"), not a calendar placement
 - Tags: comma-separated
-- `--time-class {anytime,work_hours,off_hours}` — when the auto-planner is allowed to place this task (see "Time classes" below). Default `anytime`.
-- `--scheduled-at "YYYY-MM-DD HH:MM"` (Europe/Berlin) — schedule the task immediately. Creates a calendar event on the bot calendar (titled `Task: <title>`, owner invited) and stores the task with `status=scheduled`. Use this when the user gives a concrete date AND time. The value must be an **absolute** date/time — resolve relative phrasing ("tomorrow", "next Friday") yourself using the "Current date/time" line at the top of your context.
+- `--scheduled-at "YYYY-MM-DD HH:MM"` (Europe/Berlin) — schedule the task immediately. Creates a calendar event on the bot calendar (titled `Task: <title>`, owner invited) and stores the task with `status=scheduled`. Use this whenever the user says **when** the task should happen. The value must be an **absolute** date/time — you resolve any relative or vague phrasing yourself (see "Scheduling: resolve the time, then book it" below).
 
 ### List tasks
 ```bash
@@ -42,12 +41,20 @@ Run commands via Bash — all operations go through `task_cli.py`.
 /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py remove <task_id>
 ```
 
-### Update a task
+### Update a task (incl. rescheduling)
 ```bash
 /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py update <task_id> --title "New title" --priority high --estimate 30 --deadline 2026-04-01 --notes "Updated notes"
+# Move it to a new time — updates the linked calendar event in place (or creates one if it had none):
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py update <task_id> --scheduled-at "2026-06-20 16:00"
 ```
 
-### Dump pending tasks (machine-readable, used by nightly planner)
+### Find free time (to place a vague request)
+```bash
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py free-slots --start "2026-06-22" --end "2026-06-28" --duration 60
+```
+Returns free calendar gaps (both calendars considered) as JSON. Use it when the user gives a loose window ("sometime next week") so you can pick a real open slot before booking.
+
+### Dump pending tasks (machine-readable)
 ```bash
 /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py pending-json
 ```
@@ -66,35 +73,24 @@ Run commands via Bash — all operations go through `task_cli.py`.
 - "Coffee with Maria Wednesday 10am" → title "Coffee with Maria", `--scheduled-at "<that Wednesday date> 10:00"` — this also creates a calendar event.
 - If the user mentions context like "for the house" or "work stuff", capture in tags/notes.
 
-**This skill owns task scheduling.** Never ask for or rely on the calendar skill to place a to-do — `--scheduled-at` and `schedule-batch` create the calendar events themselves. (The calendar skill is only for standalone events that aren't to-dos.) Every event this skill creates is titled `Task: <title>` and is linked back to the task via its stored `calendar_event_id`, so it can be edited/deleted in one place.
+**This skill owns task scheduling.** Never ask for or rely on the calendar skill to place a to-do — `--scheduled-at` creates the calendar event itself. (The calendar skill is only for standalone events that aren't to-dos.) Every event this skill creates is titled `Task: <title>` and is linked back to the task via its stored `calendar_event_id`, so it can be edited or deleted in one place. There is no batch/auto planner — **you** decide the time when the task is created, from what the user said.
 
-**Pending vs scheduled:**
-- If the user gives a specific date AND time → use `--scheduled-at` with an absolute date/time. The task lands in Scheduled and a single calendar event is created in one step.
-- If the user gives only a date (no time) → use `--deadline`. The task stays Pending; the nightly planner will place it on the calendar.
-- If no date/time at all → omit both. Task is Pending.
+## Scheduling: resolve the time, then book it
 
-**When listing:** Format results clearly. Show title, priority, status, and any deadline. If many tasks, group by priority or status.
+When the user tells you *when* a task should happen, your job is to turn that into one absolute `YYYY-MM-DD HH:MM` (Europe/Berlin) and pass it to `--scheduled-at`. Always anchor to the "Current date/time" line at the top of your context.
 
-**When completing/removing:** Confirm the action with the task title.
+- **Exact day + time** ("Tuesday at 3pm", "June 20 at 15:00") → resolve to the absolute date/time and `add ... --scheduled-at "2026-06-20 15:00"`. Done in one step.
+- **Relative** ("tomorrow at 9", "next Friday afternoon") → compute the absolute date yourself. If they gave a vague time-of-day ("afternoon", "morning"), pick a sensible concrete time (e.g. afternoon → 15:00, morning → 09:00).
+- **Loose window, no exact time** ("sometime next week", "this week", "Thursday at some point") → run `free-slots` over that window, pick the first open slot that fits, then `add ... --scheduled-at "<that slot>"`. This avoids double-booking.
+- **Only a date, truly no time intent** → use `--deadline` and leave the task Pending (no calendar event). Mention it's pending until they give a time.
+- **No date/time at all** → omit both; the task is Pending.
 
-**Time classes (pick when it makes sense for the task):**
-Every task carries a `time_class` that tells the auto-planner which free calendar gaps are acceptable. The exact time always comes from real availability — the class only narrows *which* free slots qualify. Infer it from the task's nature:
-- `anytime` (default) — any free slot, day or night (08:00–22:00), any day. Use for calls, phone, messages, quick or flexible work that fits between meetings.
-- `work_hours` — Mon–Fri 09:00–18:00 only. Use when the task needs businesses/offices open on a weekday (banks, calling a company, government, deliveries, appointments).
-- `off_hours` — weekday evenings (18:00–22:00) + all weekend. Use for errands, chores, personal admin, gym/exercise — things you do on your own time, not during the workday.
+After scheduling, report the concrete day, date, and time you booked (e.g. "Scheduled for Saturday June 20 at 3:00 PM").
 
-Examples:
-- "Call the dentist" → `--time-class anytime` (a call fits anywhere).
-- "Buy groceries" / "Cancel the gym membership in person" → `--time-class off_hours`.
-- "Call the bank about the wire" → `--time-class work_hours` (bank must be open on a weekday).
-If unsure, omit it (defaults to `anytime`).
+**Changing a scheduled task:** "move my dentist appointment to 4pm" / "push that to next week" → find the task (`list`), then `update <id> --scheduled-at "<new absolute time>"`. The linked calendar event moves with it.
 
-**When scheduling tasks into the calendar:**
-Use the built-in batch scheduler — it places each task only in free gaps its `time_class` allows, and handles priority ordering, buffers, and conflict detection automatically.
-```bash
-/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py schedule-batch --days 2        # schedule into next 2 days
-/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py schedule-batch --days 3        # or 3 days, etc.
-/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 task_cli.py schedule-batch --dry-run       # preview without creating events
-```
-Do NOT call the calendar CLI directly to schedule tasks — it bypasses the time-window rules.
-Report: list each scheduled task with its day, date, and time. Flag any deferred or deadline-urgent tasks.
+**Removing:** `remove <id>` deletes the task **and** its calendar event in one step. Confirm with the task title.
+
+**When listing:** Format results clearly. Show title, priority, status, scheduled time, and any deadline. If many tasks, group by priority or status.
+
+**When completing:** `done <id>`, confirm with the task title.

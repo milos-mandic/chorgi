@@ -106,7 +106,8 @@ JSON persistence helpers shared by skill CLIs and the agent process.
 - Required: CALENDAR_OWNER_ID, CALENDAR_BOT_ID
 
 ### Tasks Skill
-- task_cli.py — add/list/done/remove/update/pending-json/clear-done/schedule-batch
+- task_cli.py — add/list/done/remove/update/pending-json/clear-done/free-slots
+- Scheduling is decided at task-creation time: `--scheduled-at` creates the linked calendar event immediately; `free-slots` lets the agent pick a real open slot for loose requests. No batch/auto planner.
 - Deliberate cross-skill dependency: scheduling commands subprocess calendar_cli.py and parse its JSON stdout
 
 ### Post-Meeting Skill

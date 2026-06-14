@@ -336,7 +336,6 @@ def _create_task(body: dict) -> dict:
             "deadline": body.get("deadline"),
             "tags": tags,
             "status": body.get("status", "pending") or "pending",
-            "time_class": body.get("time_class") or "anytime",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "carry_count": 0,
         }
@@ -357,7 +356,7 @@ def _create_task(body: dict) -> dict:
 
 _TASK_FIELDS = {"title", "notes", "priority", "estimated_minutes",
                 "deadline", "tags", "status", "carry_count",
-                "scheduled_at", "calendar_event_id", "time_class"}
+                "scheduled_at", "calendar_event_id"}
 
 
 def _update_task(task_id: str, body: dict) -> dict | None:
