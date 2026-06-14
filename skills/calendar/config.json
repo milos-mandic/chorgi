@@ -2,6 +2,6 @@
   "name": "calendar",
   "description": "Calendar events with specific dates and times. View calendar, create/update/delete events, find free time slots. Use when the user specifies WHEN something should happen ('Friday at 3pm', 'tomorrow morning'). NOT for vague to-do items without a specific time.",
   "tools": ["Bash", "Read", "Write"],
-  "max_turns": 12,
+  "max_turns": 16,
   "timeout_seconds": 300
 }

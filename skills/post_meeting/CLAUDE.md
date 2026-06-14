@@ -22,11 +22,11 @@ comma-separated list of person IDs (or empty string).
 
 ```bash
 # Look up an existing person. Returns {"id": "...", ...} or {"id": null}.
-python post_meeting_cli.py match-person --name "Pavel Surmenok" --email "p@x.com"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 post_meeting_cli.py match-person --name "Pavel Surmenok" --email "p@x.com"
 
 # Record the meeting as an interaction. Use the interaction_id given to you
 # in the task input (do NOT make a new one).
-python post_meeting_cli.py create-interaction \
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 post_meeting_cli.py create-interaction \
   --id "<interaction_id>" \
   --type meeting \
   --title "Sync with Pavel" \
@@ -36,12 +36,12 @@ python post_meeting_cli.py create-interaction \
   --participants "<pid1>,<pid2>"
 
 # Optionally set a summary on the interaction.
-python post_meeting_cli.py update-interaction-summary \
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 post_meeting_cli.py update-interaction-summary \
   --id "<interaction_id>" \
   --summary "Discussed FDE Hub Q&A; agreed to follow up next week."
 
 # Propose a task (lands in inbox; user accepts/rejects in the UI).
-python post_meeting_cli.py propose-task \
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 post_meeting_cli.py propose-task \
   --interaction-id "<interaction_id>" \
   --title "Send Pavel the Q&A doc" \
   --description "Discussed on the call — share the draft Q&A." \
@@ -49,13 +49,13 @@ python post_meeting_cli.py propose-task \
   --person-id "<pid>"
 
 # Propose a contact update (role/company/notes change).
-python post_meeting_cli.py propose-contact-update \
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 post_meeting_cli.py propose-contact-update \
   --interaction-id "<interaction_id>" \
   --person-id "<pid>" \
   --patch '{"role": "Staff FDE", "notes_append": "Now leading the FDE team."}'
 
 # Propose a new person (for attendees we don't know yet).
-python post_meeting_cli.py propose-new-person \
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 post_meeting_cli.py propose-new-person \
   --interaction-id "<interaction_id>" \
   --fields '{"name": "Jane Doe", "email": "j@x.com", "company": "Acme"}'
 ```

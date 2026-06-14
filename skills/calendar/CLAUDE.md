@@ -5,10 +5,10 @@ Run commands via Bash — all calendar operations go through `calendar_cli.py`.
 
 ## Rules
 - Run commands via Bash — do not import Python modules directly
-- All CLI commands are run from the skill directory: `python calendar_cli.py <command>`
+- All CLI commands are run from the skill directory: `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 calendar_cli.py <command>`
 - Read `preferences.md` before making scheduling decisions
 - Events are created on the **bot calendar** (chorgibot@gmail.com)
-- The **owner calendar** is read-only (used to check availability)
+- The **owner calendar** is mainly for availability checks, but some events live there — if `update`/`delete` can't find an event on the bot calendar (default), retry with `--calendar owner`
 - **ALWAYS** check availability (`free` or `list --calendar owner`) before creating any event
 - Owner is auto-invited by default — use `--no-invite-owner` only if explicitly asked
 - Report results concisely — lead with the outcome
@@ -19,34 +19,34 @@ Run commands via Bash — all calendar operations go through `calendar_cli.py`.
 
 ### List upcoming events
 ```bash
-python calendar_cli.py list [--days N] [--calendar owner|bot]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 calendar_cli.py list [--days N] [--calendar owner|bot]
 ```
 
 ### Find free time slots
 ```bash
-python calendar_cli.py free [--duration MINUTES] [--days N]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 calendar_cli.py free [--duration MINUTES] [--days N]
 ```
 
 ### Create an event
 ```bash
-python calendar_cli.py create "Title" "2026-03-15 14:00" "2026-03-15 15:00" [--description "..."] [--attendees "a@b.com,c@d.com"] [--no-invite-owner] [--force]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 calendar_cli.py create "Title" "2026-03-15 14:00" "2026-03-15 15:00" [--description "..."] [--attendees "a@b.com,c@d.com"] [--no-invite-owner] [--force]
 # Times above are Europe/Berlin local. To pin to UTC explicitly, use ISO: "2026-03-15T14:00+00:00".
 ```
 Checks both calendars for conflicts before creating. Use `--force` to override.
 
 ### Update an event
 ```bash
-python calendar_cli.py update <event_id> [--title "..."] [--start "..."] [--end "..."] [--description "..."]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 calendar_cli.py update <event_id> [--title "..."] [--start "..."] [--end "..."] [--description "..."] [--calendar owner|bot]
 ```
 
 ### Delete an event
 ```bash
-python calendar_cli.py delete <event_id>
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 calendar_cli.py delete <event_id> [--calendar owner|bot]
 ```
 
 ### Suggest optimal time slots
 ```bash
-python calendar_cli.py suggest "Task description" [--duration MINUTES] [--importance high|medium|low] [--deadline YYYY-MM-DD] [--date YYYY-MM-DD]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 calendar_cli.py suggest "Task description" [--duration MINUTES] [--importance high|medium|low] [--deadline YYYY-MM-DD] [--date YYYY-MM-DD]
 ```
 
 ## Scheduling Workflow

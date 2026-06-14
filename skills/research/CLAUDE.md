@@ -13,21 +13,21 @@ Run commands via Bash — all operations go through `research_cli.py`.
 
 ### Topic Management
 ```bash
-python3 research_cli.py topics list          # List all topics and sources
-python3 research_cli.py topics add "Topic Name" ["optional context"]
-python3 research_cli.py topics remove "Topic Name"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py topics list          # List all topics and sources
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py topics add "Topic Name" ["optional context"]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py topics remove "Topic Name"
 ```
 
 ### Source Management
 ```bash
-python3 research_cli.py sources list         # List all sources
-python3 research_cli.py sources add "Source Name"
-python3 research_cli.py sources remove "Source Name"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py sources list         # List all sources
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py sources add "Source Name"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py sources remove "Source Name"
 ```
 
 ### Send Briefing
 ```bash
-python3 research_cli.py send-briefing        # Format + send workspace/briefing_draft.json as HTML email
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py send-briefing        # Format + send workspace/briefing_draft.json as HTML email
 ```
 
 ## Mode 1: Topic/Source Management
@@ -40,7 +40,7 @@ When the task mentions adding, removing, or listing topics or sources:
 
 When the task says to generate a briefing:
 
-1. `python3 research_cli.py topics list` — get all topics and sources
+1. `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py topics list` — get all topics and sources
 2. For each topic: use `WebSearch` with source-biased, date-biased queries
    - Run 2 searches per topic with different angles
    - Include source names in queries (e.g., "Forward Deployed Engineers site:news.ycombinator.com OR site:reddit.com 2026")
@@ -67,7 +67,7 @@ When the task says to generate a briefing:
    }
    ```
    Each article MUST include `source` (publication/website name) and `date` (publication date, formatted as "Mon DD, YYYY"). If the exact date is unknown, use an approximate date or "Recent".
-5. `python3 research_cli.py send-briefing` — call this **exactly once**. The CLI handles deduplication (skips previously sent URLs) and records what was sent.
+5. `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 research_cli.py send-briefing` — call this **exactly once**. The CLI handles deduplication (skips previously sent URLs) and records what was sent.
 6. Report: topic count, total article count
 
 ## Guidelines

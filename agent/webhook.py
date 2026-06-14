@@ -291,7 +291,9 @@ class WebhookServer:
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
-                self.send_header("Cache-Control", "no-cache")
+                # no-store (not no-cache): Cloudflare caches .js/.css by
+                # extension and may serve stale assets after a deploy.
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(data)
 

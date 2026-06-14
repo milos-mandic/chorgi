@@ -13,7 +13,7 @@ Run commands via Bash — all operations go through `bookmarks_cli.py`.
 
 ### Save a bookmark
 ```bash
-python3 bookmarks_cli.py add "https://example.com" --title "Optional title" --tags "tag1,tag2" --notes "Why I saved this"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 bookmarks_cli.py add "https://example.com" --title "Optional title" --tags "tag1,tag2" --notes "Why I saved this"
 ```
 - URL is required. Title, tags, and notes are optional.
 - If the user provides context about why they're saving it, put that in --notes.
@@ -21,19 +21,19 @@ python3 bookmarks_cli.py add "https://example.com" --title "Optional title" --ta
 
 ### List bookmarks
 ```bash
-python3 bookmarks_cli.py list                    # All bookmarks, newest first
-python3 bookmarks_cli.py list --tag "python"     # Filter by tag
-python3 bookmarks_cli.py list --limit 10         # Limit results
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 bookmarks_cli.py list                    # All bookmarks, newest first
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 bookmarks_cli.py list --tag "python"     # Filter by tag
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 bookmarks_cli.py list --limit 10         # Limit results
 ```
 
 ### Search bookmarks
 ```bash
-python3 bookmarks_cli.py search "query"          # Search title, URL, notes, tags
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 bookmarks_cli.py search "query"          # Search title, URL, notes, tags
 ```
 
 ### Remove a bookmark
 ```bash
-python3 bookmarks_cli.py remove "https://example.com"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 bookmarks_cli.py remove "https://example.com"
 ```
 
 ## Behavior

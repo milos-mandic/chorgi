@@ -15,48 +15,48 @@ Run commands via Bash — all email operations go through `email_cli.py`.
 
 ### Check inbox (unread emails)
 ```bash
-python email_cli.py check [--count N]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py check [--count N]
 ```
 Returns JSON array of unread emails with uid, from, subject, date, body_preview.
 
 ### Read a specific email
 ```bash
-python email_cli.py read <uid>
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py read <uid>
 ```
 Returns full email content by UID.
 
 ### Search emails
 ```bash
-python email_cli.py search "<query>" [--max N]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py search "<query>" [--max N]
 ```
 Searches by subject or sender. Returns matching emails.
 
 ### Send an email
 ```bash
-python email_cli.py send "<to>" "<subject>" "<body>"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py send "<to>" "<subject>" "<body>"
 ```
 Sends a plain text email immediately.
 
 ### Draft an email (save for review)
 ```bash
-python email_cli.py draft "<to>" "<subject>" "<body>"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py draft "<to>" "<subject>" "<body>"
 ```
 Saves draft as JSON in `workspace/drafts/`. Does NOT send.
 
 ### List saved drafts
 ```bash
-python email_cli.py list-drafts
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py list-drafts
 ```
 
 ### Send a saved draft
 ```bash
-python email_cli.py send-draft <draft_file>
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py send-draft <draft_file>
 ```
 Reads the draft JSON and sends it.
 
 ### List mailbox folders
 ```bash
-python email_cli.py folders
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py folders
 ```
 
 ## Draft Workflow
@@ -77,7 +77,7 @@ When your prompt contains a `## Forward-Reply Task` section, you are drafting a 
 5. Sign off with "Best," or "Cheers," followed by "Milos"
 6. Send the draft to Milos's personal email using:
    ```bash
-   python email_cli.py send "milos.mandic.etf@gmail.com" "Re: <original subject> — Draft Reply" "<draft body>"
+   /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 email_cli.py send "milos.mandic.etf@gmail.com" "Re: <original subject> — Draft Reply" "<draft body>"
    ```
 7. Return the draft text in your response so it can be shown via Telegram
 

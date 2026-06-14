@@ -57,7 +57,7 @@ class NavigationalParser(argparse.ArgumentParser):
     """Argparse subclass that emits JSON errors with usage hints."""
 
     def error(self, message):
-        _error(message, hint=f"Run: python calendar_cli.py {self.prog.split()[-1] if ' ' in self.prog else ''} --help".strip())
+        _error(message, hint=f"Run: calendar_cli.py {self.prog.split()[-1] if ' ' in self.prog else ''} --help".strip())
 
 
 # --- Helpers ---
@@ -177,7 +177,7 @@ def cmd_create(args):
 def cmd_update(args):
     """Update an existing event."""
     try:
-        _, bot_id = calendar_client._get_calendar_ids()
+        cal_id = _resolve_calendar_id(args.calendar)
         updates = {}
         if args.title:
             updates["summary"] = args.title
@@ -189,22 +189,24 @@ def cmd_update(args):
             updates["description"] = args.description
         if not updates:
             _error("No updates specified.", hint="Provide at least one of: --title, --start, --end, --description")
-        event = calendar_client.update_event(bot_id, args.event_id, **updates)
+        event = calendar_client.update_event(cal_id, args.event_id, **updates)
         _output(event)
     except SystemExit:
         raise
     except Exception as e:
-        _error(str(e), hint="Check that the event_id is valid. Use: python calendar_cli.py list --calendar bot")
+        other = "owner" if args.calendar == "bot" else "bot"
+        _error(str(e), hint=f"Event not found on the {args.calendar} calendar? It may live on the {other} calendar — retry with --calendar {other}. List events with: calendar_cli.py list --calendar {other}")
 
 
 def cmd_delete(args):
     """Delete an event."""
     try:
-        _, bot_id = calendar_client._get_calendar_ids()
-        result = calendar_client.delete_event(bot_id, args.event_id)
+        cal_id = _resolve_calendar_id(args.calendar)
+        result = calendar_client.delete_event(cal_id, args.event_id)
         _output({"deleted": args.event_id, "message": str(result)})
     except Exception as e:
-        _error(str(e), hint="Check that the event_id is valid. Use: python calendar_cli.py list --calendar bot")
+        other = "owner" if args.calendar == "bot" else "bot"
+        _error(str(e), hint=f"Event not found on the {args.calendar} calendar? It may live on the {other} calendar — retry with --calendar {other}. List events with: calendar_cli.py list --calendar {other}")
 
 
 def cmd_suggest(args):
@@ -267,11 +269,15 @@ def main():
     p.add_argument("--start", help="New start time", default=None)
     p.add_argument("--end", help="New end time", default=None)
     p.add_argument("--description", help="New description", default=None)
+    p.add_argument("--calendar", choices=["owner", "bot"], default="bot",
+                    help="Which calendar the event lives on")
     p.set_defaults(func=cmd_update)
 
     # delete
     p = sub.add_parser("delete", help="Delete an event")
     p.add_argument("event_id", help="Event ID to delete")
+    p.add_argument("--calendar", choices=["owner", "bot"], default="bot",
+                    help="Which calendar the event lives on")
     p.set_defaults(func=cmd_delete)
 
     # suggest

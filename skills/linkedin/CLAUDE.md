@@ -18,32 +18,32 @@ Read `style_guide.md` for writing guidelines and format specifications.
 
 ```bash
 # Calendar
-python3 linkedin_cli.py calendar show                    # Current week plan
-python3 linkedin_cli.py calendar context                 # Full planning context (history, rotation, feed, formats, viral)
-python3 linkedin_cli.py calendar set '<json>'            # Save a full week calendar
-python3 linkedin_cli.py calendar update <date> --status <planned|drafted|posted|skipped>
-python3 linkedin_cli.py calendar get <date_or_day>       # Get single day entry (date, weekday, or "today")
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar show                    # Current week plan
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar context                 # Full planning context (history, rotation, feed, formats, viral)
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar set '<json>'            # Save a full week calendar
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar update <date> --status <planned|drafted|posted|skipped>
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar get <date_or_day>       # Get single day entry (date, weekday, or "today")
 
 # Content Feed
-python3 linkedin_cli.py feed list [--pillar <name>] [--unused]
-python3 linkedin_cli.py feed add '<json>'                # {content, source, url?, pillar?, key_insight?}
-python3 linkedin_cli.py feed use <id>                    # Mark item used
-python3 linkedin_cli.py feed remove <id>
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py feed list [--pillar <name>] [--unused]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py feed add '<json>'                # {content, source, url?, pillar?, key_insight?}
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py feed use <id>                    # Mark item used
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py feed remove <id>
 
 # Post History
-python3 linkedin_cli.py history log '<json>'             # {date, topic, format, pillar, draft_file?}
-python3 linkedin_cli.py history show [--weeks N]         # Recent history (default 4 weeks)
-python3 linkedin_cli.py history formats                  # Format distribution
-python3 linkedin_cli.py history pillars                  # Pillar distribution
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py history log '<json>'             # {date, topic, format, pillar, draft_file?}
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py history show [--weeks N]         # Recent history (default 4 weeks)
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py history formats                  # Format distribution
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py history pillars                  # Pillar distribution
 
 # Pillars
-python3 linkedin_cli.py pillars show                     # Show pillar definitions
-python3 linkedin_cli.py pillars rotation                 # Least-recently-used first
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py pillars show                     # Show pillar definitions
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py pillars rotation                 # Least-recently-used first
 
 # Viral Log
-python3 linkedin_cli.py viral log '<json>'               # {date, topic, format?, pillar?, metrics?, what_worked?, hook?, day_of_week?}
-python3 linkedin_cli.py viral show [--last N]
-python3 linkedin_cli.py viral patterns                   # Analyze patterns across viral posts
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py viral log '<json>'               # {date, topic, format?, pillar?, metrics?, what_worked?, hook?, day_of_week?}
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py viral show [--last N]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py viral patterns                   # Analyze patterns across viral posts
 ```
 
 ## Content Pillars
@@ -70,7 +70,7 @@ python3 linkedin_cli.py viral patterns                   # Analyze patterns acro
 
 When: scheduled Sunday evening, or triggered manually ("plan this week's linkedin" or similar).
 
-1. `python3 linkedin_cli.py calendar context` — get comprehensive planning context
+1. `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar context` — get comprehensive planning context
 2. Check if a calendar already exists for the upcoming week — if so, report and skip
 3. Do 1-2 light WebSearch calls to check what's broadly trending in FDE/SE/AI/DevRel space (just for high-level awareness, not deep research)
 4. Review unused feed items, pillar rotation, format distribution, viral patterns
@@ -83,9 +83,9 @@ When: scheduled Sunday evening, or triggered manually ("plan this week's linkedi
    - Mix of evergreen and timely content
 6. Save calendar:
    ```bash
-   python3 linkedin_cli.py calendar set '{"week_of": "YYYY-MM-DD", "days": [{"date": "...", "weekday": "Monday", "topic": "...", "format": "practical_tip", "pillar": "technical_craft", "angle": "...", "feed_ids": [], "status": "planned"}, ...]}'
+   /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar set '{"week_of": "YYYY-MM-DD", "days": [{"date": "...", "weekday": "Monday", "topic": "...", "format": "practical_tip", "pillar": "technical_craft", "angle": "...", "feed_ids": [], "status": "planned"}, ...]}'
    ```
-7. Mark consumed feed items: `python3 linkedin_cli.py feed use <id>`
+7. Mark consumed feed items: `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py feed use <id>`
 8. Report the plan concisely
 
 NOTE: This is a directional plan, not final copy. Each day's deep research happens at draft time.
@@ -94,7 +94,7 @@ NOTE: This is a directional plan, not final copy. Each day's deep research happe
 
 When: scheduled every weekday morning, or triggered manually ("draft today's post").
 
-1. `python3 linkedin_cli.py calendar get today` — get today's calendar entry
+1. `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar get today` — get today's calendar entry
 2. If weekend, already drafted, or already posted: skip and report
 3. Read `style_guide.md` and `profile.md`
 4. **Research phase**: Run 3-5 targeted WebSearch calls for today's specific topic:
@@ -113,7 +113,7 @@ When: scheduled every weekday morning, or triggered manually ("draft today's pos
    - No markdown in the post body (no bold, no bullets, no headers)
    - Use line breaks between paragraphs
    - Post must be ready to copy-paste into LinkedIn as-is
-6. Update calendar: `python3 linkedin_cli.py calendar update <date> --status drafted`
+6. Update calendar: `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py calendar update <date> --status drafted`
 7. Report to user: the full draft text, word count, format, pillar, image suggestion, and a brief note on what research informed the draft
 
 ### Drafting Guidelines
@@ -183,7 +183,7 @@ When: user sends "content idea: ..." or forwards content for the feed.
 4. Determine source type: `telegram` (forwarded message), `article` (has URL), `newsletter` (mentions newsletter/substack), `manual` (raw idea)
 5. Store:
    ```bash
-   python3 linkedin_cli.py feed add '{"content": "...", "source": "telegram", "url": null, "pillar": "the_fde_role", "key_insight": "..."}'
+   /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py feed add '{"content": "...", "source": "telegram", "url": null, "pillar": "the_fde_role", "key_insight": "..."}'
    ```
 6. Confirm: what was stored, which pillar, the extracted insight
 
@@ -216,9 +216,9 @@ When: user reports a post went viral ("my post about X went viral, 500 likes 100
    - Closer — did it drive comments effectively?
 3. Log:
    ```bash
-   python3 linkedin_cli.py viral log '{"date": "...", "topic": "...", "format": "...", "pillar": "...", "metrics": {"likes": N, "comments": N, "impressions": N}, "what_worked": "...", "hook": "first line of the post", "day_of_week": "Tuesday"}'
+   /Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py viral log '{"date": "...", "topic": "...", "format": "...", "pillar": "...", "metrics": {"likes": N, "comments": N, "impressions": N}, "what_worked": "...", "hook": "first line of the post", "day_of_week": "Tuesday"}'
    ```
-4. Check patterns: `python3 linkedin_cli.py viral patterns`
+4. Check patterns: `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 linkedin_cli.py viral patterns`
 5. Report: analysis of what worked + any emerging patterns across all viral posts + specific recommendation for how to replicate this success
 
 ---

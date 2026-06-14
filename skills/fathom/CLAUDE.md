@@ -14,25 +14,25 @@ Run commands via Bash — all transcript operations go through `fathom_cli.py`.
 
 ### List saved transcripts
 ```bash
-python fathom_cli.py list [--count N]
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py list [--count N]
 ```
 Returns JSON array with filename, title, date, attendees for each transcript.
 
 ### Read a specific transcript
 ```bash
-python fathom_cli.py read <filename>
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py read <filename>
 ```
 Returns the full transcript content.
 
 ### Search across transcripts
 ```bash
-python fathom_cli.py search "<query>"
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py search "<query>"
 ```
 Case-insensitive search. Returns matching transcripts with context lines.
 
 ### Read the most recent transcript
 ```bash
-python fathom_cli.py latest
+/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py latest
 ```
 Returns the full content of the newest transcript.
 
@@ -40,20 +40,20 @@ Returns the full content of the newest transcript.
 
 ### Webhook summary (most common)
 A Fathom webhook just saved a new transcript. Summarize it:
-1. Run `python fathom_cli.py latest`
+1. Run `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py latest`
 2. Produce 2-4 bullet points: key decisions, action items, main topics
 3. Be concise — each bullet is one sentence
 4. No preamble, no greetings, no filler
 
 ### Past meeting query
 User asks about a specific meeting or topic:
-1. Run `python fathom_cli.py list` to see available transcripts
-2. Run `python fathom_cli.py read <filename>` for the relevant one
+1. Run `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py list` to see available transcripts
+2. Run `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py read <filename>` for the relevant one
 3. Answer the user's question directly
 
 ### Topic search
 User asks about something discussed across meetings:
-1. Run `python fathom_cli.py search "<topic>"`
+1. Run `/Users/chorgi/projects/chorgi_bot/.venv/bin/python3 fathom_cli.py search "<topic>"`
 2. If needed, read specific transcripts for full context
 3. Synthesize an answer across meetings
 
