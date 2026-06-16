@@ -265,6 +265,37 @@ def api_write(path: str, method: str, body: dict | None, server) -> tuple[int, d
             ok = get_local_chat().delete_conversation(cid)
             return (200 if ok else 404), {"deleted": ok}
 
+        # People / contacts
+        if path == "/api/people" and method == "POST":
+            if body is None or not (body.get("name") or "").strip():
+                return 400, {"error": "name required"}
+            from agent.knowledge import models as km
+            return 200, km.upsert_person(
+                body["name"].strip(),
+                linkedin_url=(body.get("linkedin_url") or None),
+                email=(body.get("email") or None),
+                x_handle=(body.get("x_handle") or None),
+                role=(body.get("role") or None),
+                company=(body.get("company") or None),
+                tags=_parse_tags(body.get("tags")),
+                source=(body.get("source") or "manual"),
+            )
+
+        if path.startswith("/api/people/"):
+            pid = path[len("/api/people/"):]
+            from agent.knowledge import models as km
+            if method == "PATCH":
+                if body is None:
+                    return 400, {"error": "bad json"}
+                patch = dict(body)
+                if "tags" in patch:
+                    patch["tags"] = _parse_tags(patch["tags"])
+                updated = km.update_person_fields(pid, patch)
+                return (200, updated) if updated else (404, {"error": "person not found"})
+            if method == "DELETE":
+                ok = km.delete_person(pid)
+                return (200 if ok else 404), {"deleted": ok}
+
         # Trigger subagent
         if path == "/api/trigger" and method == "POST":
             if body is None:
@@ -314,6 +345,15 @@ def _build_state() -> dict:
         "inbox": inbox,
         "now": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _parse_tags(tags) -> list[str]:
+    """Normalize a tags value (comma-string or list) to a clean list of strings."""
+    if isinstance(tags, str):
+        return [t.strip() for t in tags.split(",") if t.strip()]
+    if isinstance(tags, list):
+        return [str(t).strip() for t in tags if str(t).strip()]
+    return []
 
 
 def _create_task(body: dict) -> dict:

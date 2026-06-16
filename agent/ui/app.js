@@ -12,6 +12,8 @@ let shoppingMinPrice = null;
 let shoppingMaxPrice = null;
 let shoppingSort = "newest";
 let contactsFilter = "";
+let contactsSort = "name";
+let currentPerson = null;
 
 // ---------------- Fetch helpers ----------------
 
@@ -86,6 +88,7 @@ function setActivePage(name) {
   document.getElementById("add-bookmark-btn").classList.toggle("hidden", name !== "bookmarks");
   document.getElementById("add-watch-btn").classList.toggle("hidden", name !== "watch");
   document.getElementById("add-shopping-btn").classList.toggle("hidden", name !== "shopping");
+  document.getElementById("add-contact-btn").classList.toggle("hidden", name !== "contacts");
   if (name === "wiki" && !wikiLoaded) loadWikiTopics();
   if (name === "chat" && !chatLoaded) initChat();
 }
@@ -703,14 +706,57 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Esc closes modals
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { closeTaskModal(); closeBookmarkModal(); closeWatchModal(); closeShoppingModal(); closePersonModal(); }
+    if (e.key === "Escape") { closeTaskModal(); closeBookmarkModal(); closeWatchModal(); closeShoppingModal(); closePersonModal(); closePersonEditModal(); }
   });
 
   const cs = document.getElementById("contacts-search");
   if (cs) cs.addEventListener("input", (e) => { contactsFilter = e.target.value; renderContacts(); });
 
+  const csort = document.getElementById("contacts-sort");
+  if (csort) csort.addEventListener("change", (e) => { contactsSort = e.target.value; renderContacts(); });
+
+  document.getElementById("add-contact-btn").addEventListener("click", () => openPersonEditModal(null));
+
   const pmc = document.getElementById("person-modal-close");
   if (pmc) pmc.addEventListener("click", closePersonModal);
+
+  const pme = document.getElementById("person-modal-edit");
+  if (pme) pme.addEventListener("click", () => { closePersonModal(); openPersonEditModal(currentPerson); });
+
+  document.getElementById("person-cancel").addEventListener("click", closePersonEditModal);
+  document.getElementById("person-edit-x").addEventListener("click", closePersonEditModal);
+
+  document.getElementById("person-save").addEventListener("click", async () => {
+    const id = document.getElementById("person-id").value;
+    const name = document.getElementById("person-name").value.trim();
+    if (!name) { toast("Name is required", "error"); return; }
+    const payload = {
+      name,
+      role: document.getElementById("person-role").value.trim(),
+      company: document.getElementById("person-company").value.trim(),
+      email: document.getElementById("person-email").value.trim(),
+      source: document.getElementById("person-source").value.trim(),
+      linkedin_url: document.getElementById("person-linkedin").value.trim(),
+      x_handle: document.getElementById("person-x").value.trim(),
+      tags: document.getElementById("person-tags").value,
+    };
+    try {
+      if (id) await api("PATCH", "/api/people/" + id, payload);
+      else await api("POST", "/api/people", payload);
+      closePersonEditModal();
+      poll();
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+
+  document.getElementById("person-delete").addEventListener("click", async () => {
+    const id = document.getElementById("person-id").value;
+    if (!id || !confirm("Delete this contact?")) return;
+    try {
+      await api("DELETE", "/api/people/" + id);
+      closePersonEditModal();
+      poll();
+    } catch (e) { toast("Delete failed: " + e.message, "error"); }
+  });
 
   const recluster = document.getElementById("wiki-recluster-btn");
   if (recluster) recluster.addEventListener("click", reclusterWiki);
@@ -806,35 +852,69 @@ async function decideInbox(id, action) {
 
 // ---- Contacts ----
 
+function fmtDateShort(s) {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
 function renderContacts() {
-  const list = document.getElementById("contacts-list");
-  if (!list) return;
+  const tbody = document.getElementById("contacts-tbody");
+  if (!tbody) return;
   const all = state.people || [];
   const q = contactsFilter.trim().toLowerCase();
-  const filtered = q
+  let rows = q
     ? all.filter(p => (p.name || "").toLowerCase().includes(q)
                     || (p.company || "").toLowerCase().includes(q)
                     || (p.role || "").toLowerCase().includes(q)
+                    || (p.source || "").toLowerCase().includes(q)
                     || (p.tags || "").toLowerCase().includes(q))
-    : all;
+    : all.slice();
+  // Blanks sort last for text keys; comparator map mirrors the shopping list.
+  const byText = (key) => (a, b) => {
+    const av = (a[key] || "").toString(), bv = (b[key] || "").toString();
+    if (!av && !bv) return 0;
+    if (!av) return 1;
+    if (!bv) return -1;
+    return av.localeCompare(bv, undefined, { sensitivity: "base" });
+  };
+  const cmp = {
+    name: (a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }),
+    "name-desc": (a, b) => (b.name || "").localeCompare(a.name || "", undefined, { sensitivity: "base" }),
+    newest: (a, b) => (b.created_at || "").localeCompare(a.created_at || ""),
+    oldest: (a, b) => (a.created_at || "").localeCompare(b.created_at || ""),
+    role: byText("role"),
+    source: byText("source"),
+  }[contactsSort] || cmp_name_fallback;
+  rows.sort(cmp);
   document.getElementById("contacts-count").textContent = all.length;
-  list.innerHTML = "";
-  if (!filtered.length) {
-    list.appendChild(all.length
-      ? emptyState("No matches", "Try a different name, company, or tag.")
-      : emptyState("No contacts yet", "People the agent meets in your meetings and email will appear here."));
+  tbody.innerHTML = "";
+  if (!rows.length) {
+    const cell = el("td", { colspan: "4" }, all.length
+      ? emptyState("No matches", "Try a different name, company, source, or tag.")
+      : emptyState("No contacts yet", "People the agent meets in your meetings and email will appear here. Or add one manually."));
+    tbody.appendChild(el("tr", {}, cell));
     return;
   }
-  for (const p of filtered) {
+  for (const p of rows) {
     const sub = [p.role, p.company].filter(Boolean).join(" · ");
-    list.appendChild(el("div", { class: "contact-card", onclick: () => openPersonModal(p.id) },
-      avatar(p.name),
-      el("div", { class: "contact-card-body" },
-        el("div", { class: "contact-name" }, p.name),
-        sub ? el("div", { class: "muted small" }, sub) : null,
+    tbody.appendChild(el("tr", { class: "contact-row", onclick: () => openPersonModal(p.id) },
+      el("td", {},
+        el("div", { class: "contact-name-cell" },
+          avatar(p.name),
+          el("span", { class: "contact-name" }, p.name),
+        ),
       ),
+      el("td", { class: "muted" }, sub || "—"),
+      el("td", { class: "muted small" }, p.source || "—"),
+      el("td", { class: "muted small" }, fmtDateShort(p.created_at) || "—"),
     ));
   }
+}
+
+function cmp_name_fallback(a, b) {
+  return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
 }
 
 function avatar(name) {
@@ -849,6 +929,7 @@ function avatar(name) {
 async function openPersonModal(id) {
   try {
     const p = await api("GET", `/api/people/${id}`);
+    currentPerson = p;
     document.getElementById("person-modal-name").textContent = p.name;
     const meta = [p.role, p.company, p.email, p.linkedin_url].filter(Boolean).join(" • ");
     document.getElementById("person-modal-meta").textContent = meta;
@@ -877,6 +958,27 @@ async function openPersonModal(id) {
 
 function closePersonModal() {
   document.getElementById("person-modal").classList.add("hidden");
+}
+
+function openPersonEditModal(p) {
+  document.getElementById("person-edit-title").textContent = p ? "Edit contact" : "Add contact";
+  document.getElementById("person-id").value = p?.id || "";
+  document.getElementById("person-name").value = p?.name || "";
+  document.getElementById("person-role").value = p?.role || "";
+  document.getElementById("person-company").value = p?.company || "";
+  document.getElementById("person-email").value = p?.email || "";
+  document.getElementById("person-source").value = p?.source || "";
+  document.getElementById("person-linkedin").value = p?.linkedin_url || "";
+  document.getElementById("person-x").value = p?.x_handle || "";
+  let tags = [];
+  try { tags = JSON.parse(p?.tags || "[]"); } catch {}
+  document.getElementById("person-tags").value = Array.isArray(tags) ? tags.join(", ") : "";
+  document.getElementById("person-delete").classList.toggle("hidden", !p);
+  document.getElementById("person-edit-modal").classList.remove("hidden");
+}
+
+function closePersonEditModal() {
+  document.getElementById("person-edit-modal").classList.add("hidden");
 }
 
 // ---- Wiki ----

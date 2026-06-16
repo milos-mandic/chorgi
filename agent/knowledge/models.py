@@ -145,6 +145,17 @@ def update_person_fields(person_id: str, patch: dict) -> dict | None:
         conn.close()
 
 
+def delete_person(person_id: str) -> bool:
+    """Delete a person. interaction_participants rows cascade (FK ON DELETE CASCADE)."""
+    conn = connect()
+    try:
+        cur = conn.execute("DELETE FROM people WHERE id = ?", (person_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def person_interactions(person_id: str, limit: int = 20) -> list[dict]:
     conn = connect()
     try:
