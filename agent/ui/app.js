@@ -868,6 +868,7 @@ function renderContacts() {
     ? all.filter(p => (p.name || "").toLowerCase().includes(q)
                     || (p.company || "").toLowerCase().includes(q)
                     || (p.role || "").toLowerCase().includes(q)
+                    || (p.email || "").toLowerCase().includes(q)
                     || (p.source || "").toLowerCase().includes(q)
                     || (p.tags || "").toLowerCase().includes(q))
     : all.slice();
@@ -891,7 +892,7 @@ function renderContacts() {
   document.getElementById("contacts-count").textContent = all.length;
   tbody.innerHTML = "";
   if (!rows.length) {
-    const cell = el("td", { colspan: "4" }, all.length
+    const cell = el("td", { colspan: "5" }, all.length
       ? emptyState("No matches", "Try a different name, company, source, or tag.")
       : emptyState("No contacts yet", "People the agent meets in your meetings and email will appear here. Or add one manually."));
     tbody.appendChild(el("tr", {}, cell));
@@ -907,6 +908,10 @@ function renderContacts() {
         ),
       ),
       el("td", { class: "muted" }, sub || "—"),
+      el("td", { class: "muted small" },
+        p.email
+          ? el("a", { href: "mailto:" + p.email, class: "contact-email", onclick: (e) => e.stopPropagation() }, p.email)
+          : "—"),
       el("td", { class: "muted small" }, p.source || "—"),
       el("td", { class: "muted small" }, fmtDateShort(p.created_at) || "—"),
     ));

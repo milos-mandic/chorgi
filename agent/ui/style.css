@@ -998,6 +998,8 @@ button.ghost-btn:hover { border-color: var(--border-strong); background: var(--s
   min-width: 0;
 }
 .contact-name-cell .avatar { width: 28px; height: 28px; font-size: 11px; }
+.contact-email { color: var(--accent); text-decoration: none; }
+.contact-email:hover { text-decoration: underline; }
 .contact-name {
   font-weight: 600;
   font-size: 13px;
