@@ -19,7 +19,7 @@ import fcntl
 import json
 import os
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -35,15 +35,29 @@ def now_local() -> datetime:
 
 
 def now_context_line() -> str:
-    """A single line stating the current date/time, for LLM context.
+    """Current date/time plus a precomputed weekday->date ladder, for LLM context.
 
     Injected at the top of router and sub-agent context so relative dates
-    ("tomorrow", "next Friday", "3pm") resolve against a real anchor.
+    resolve against a real anchor. The ladder exists because the model was
+    miscounting named weekdays into absolute dates (events landing a day late).
+    We hand it the exact date for "today", "tomorrow", and the NEXT occurrence
+    of each weekday so it never has to do date arithmetic itself.
     """
     local = now_local()
+    ladder = [
+        f"    {(local + timedelta(days=i)).strftime('%A')} = "
+        f"{(local + timedelta(days=i)).strftime('%Y-%m-%d')}"
+        for i in range(1, 8)
+    ]
     return (
         f"Current date/time: {local.strftime('%A %Y-%m-%d %H:%M')} "
-        f"({local.tzname()}, {local.isoformat()})"
+        f"({local.tzname()}, {local.isoformat()})\n"
+        "Date resolution — use these EXACT dates; do NOT compute weekdays yourself:\n"
+        f"  today = {local.strftime('%A %Y-%m-%d')}\n"
+        f"  tomorrow = {(local + timedelta(days=1)).strftime('%A %Y-%m-%d')}\n"
+        "  next occurrence of each weekday (a bare weekday name means the "
+        "soonest future one):\n"
+        + "\n".join(ladder)
     )
 
 
