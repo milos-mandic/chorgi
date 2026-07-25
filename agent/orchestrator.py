@@ -57,6 +57,8 @@ class Orchestrator:
         line = f"{ts},{event_type},{extras}\n"
         try:
             cost_path = PERSONAL_DIR / "costs.log"
+            if cost_path.exists() and cost_path.stat().st_size > 5 * 1024 * 1024:
+                os.replace(cost_path, cost_path.with_suffix(".log.1"))
             with open(cost_path, "a") as f:
                 f.write(line)
         except OSError:
@@ -326,7 +328,9 @@ class Orchestrator:
                             "type", "skill", "prompt", "notify_user",
                             "display_name", "silent_when_empty")}
         try:
-            path.write_text(json.dumps(to_save, indent=2) + "\n")
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(to_save, indent=2) + "\n")
+            os.replace(tmp, path)
         except OSError as e:
             return False, str(e)
 

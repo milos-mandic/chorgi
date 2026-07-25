@@ -3,8 +3,10 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 SCHEDULES_DIR = Path(__file__).parent.parent / "schedules"
 HEARTBEAT_INTERVAL = 300  # 5 minutes
+RETRY_COOLDOWN_SEC = 30 * 60  # back off after a failed/interrupted run
+EMAIL_CHECK_TIMEOUT = 120  # hard cap so a wedged IMAP call can't stall the heartbeat
 
 VALID_TRIGGERS = {"daily", "interval"}
 VALID_TYPES = {"haiku", "sub_agent", "internal"}
@@ -61,11 +65,16 @@ if str(_EMAIL_SKILL_DIR) not in sys.path:
 class Scheduler:
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
+        # Exposed via the /health endpoint so an external watchdog can tell
+        # a live heartbeat from a stalled one.
+        self.last_heartbeat_at: datetime | None = None
+        self.last_heartbeat_duration_s: float | None = None
 
     async def start(self):
         """Infinite loop: heartbeat → check schedules → sleep."""
         logger.info("Scheduler started")
         while True:
+            pass_start = time.monotonic()
             try:
                 await self._heartbeat()
             except Exception as e:
@@ -75,6 +84,12 @@ class Scheduler:
                 await self._check_schedules()
             except Exception as e:
                 logger.error(f"Schedule check error: {e}")
+
+            duration = time.monotonic() - pass_start
+            self.last_heartbeat_at = datetime.now(timezone.utc)
+            self.last_heartbeat_duration_s = duration
+            if duration > 60:
+                logger.warning(f"Heartbeat pass took {duration:.0f}s — investigate what stalled")
 
             await asyncio.sleep(HEARTBEAT_INTERVAL)
 
@@ -139,6 +154,7 @@ class Scheduler:
 
             if due:
                 try:
+                    self._mark_attempt(path, now)
                     await self._execute(schedule)
                     self._mark_ran(path, now)
                 except Exception as e:
@@ -151,6 +167,15 @@ class Scheduler:
                             pass
 
     def _is_due(self, schedule: dict, now: datetime) -> bool:
+        # last_attempt is set just before a run and cleared on success, so its
+        # presence means the last run failed or was interrupted by a restart.
+        # Back off instead of retrying (and re-notifying) every heartbeat.
+        last_attempt_str = schedule.get("last_attempt")
+        if last_attempt_str:
+            last_attempt = datetime.fromisoformat(last_attempt_str)
+            if (now - last_attempt).total_seconds() < RETRY_COOLDOWN_SEC:
+                return False
+
         trigger = schedule.get("trigger")
         last_run_str = schedule.get("last_run")
 
@@ -224,6 +249,13 @@ class Scheduler:
 
     async def _run_internal(self, prompt: str) -> str:
         """Internal-type schedules: pure-Python jobs, no LLM call by the dispatcher."""
+        if prompt == "__BACKUP__":
+            try:
+                from agent.backup import run_backup
+                return await asyncio.to_thread(run_backup)
+            except Exception as e:
+                logger.exception("Backup failed")
+                return f"Error: {e}"
         if prompt == "__WIKI_MAINTENANCE__":
             try:
                 from agent.knowledge import wiki as wiki_mod
@@ -244,7 +276,10 @@ class Scheduler:
         try:
             import email_client
             from forward_parser import is_forwarded_from_milos
-            new = await asyncio.to_thread(email_client.check_new_emails)
+            new = await asyncio.wait_for(
+                asyncio.to_thread(email_client.check_new_emails),
+                timeout=EMAIL_CHECK_TIMEOUT,
+            )
             if not new:
                 return
             for e in new:
@@ -359,6 +394,23 @@ class Scheduler:
         try:
             data = json.loads(schedule_path.read_text())
             data["last_run"] = now.isoformat()
-            schedule_path.write_text(json.dumps(data, indent=2) + "\n")
+            data.pop("last_attempt", None)
+            _write_schedule_json(schedule_path, data)
         except Exception as e:
             logger.error(f"Failed to update last_run for {schedule_path.name}: {e}")
+
+    def _mark_attempt(self, schedule_path: Path, now: datetime):
+        """Record that a run is starting; cleared by _mark_ran on success."""
+        try:
+            data = json.loads(schedule_path.read_text())
+            data["last_attempt"] = now.isoformat()
+            _write_schedule_json(schedule_path, data)
+        except Exception as e:
+            logger.error(f"Failed to update last_attempt for {schedule_path.name}: {e}")
+
+
+def _write_schedule_json(path: Path, data: dict):
+    """Atomic write (tmp + rename) so a crash can't truncate a schedule file."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.replace(tmp, path)

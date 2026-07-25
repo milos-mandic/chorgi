@@ -1,9 +1,12 @@
 """Haiku fast path — classification and quick responses in a single API call."""
 
 import json
+import logging
 import re
 
 from agent.api_client import call_haiku
+
+logger = logging.getLogger(__name__)
 
 
 async def classify_and_respond(
@@ -48,7 +51,16 @@ async def classify_and_respond(
                 pass
 
     if result is None:
-        result = {"route": "haiku", "response": raw}
+        # Raw text that *looks* like broken JSON must not reach the user;
+        # genuine plain-text answers still pass through as the response.
+        if raw.lstrip().startswith("{"):
+            logger.warning("Haiku returned unparseable JSON: %r", raw[:500])
+            result = {
+                "route": "haiku",
+                "response": "I had trouble with that one — could you rephrase?",
+            }
+        else:
+            result = {"route": "haiku", "response": raw}
 
     result["_usage"] = usage
     return result

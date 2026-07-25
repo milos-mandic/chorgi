@@ -289,13 +289,65 @@ async def post_init(application: Application):
     orchestrator.send_to_user = send_to_user
 
     scheduler = Scheduler(orchestrator)
-    asyncio.create_task(scheduler.start())
+    orchestrator.scheduler = scheduler  # /health reads heartbeat metrics
+    # Keep a strong reference — asyncio holds only weak refs to tasks, so an
+    # unreferenced scheduler task can be garbage-collected mid-flight.
+    scheduler_task = asyncio.create_task(scheduler.start())
+    application.bot_data["scheduler_task"] = scheduler_task
+
+    def _scheduler_died(task: asyncio.Task):
+        if task.cancelled():
+            return
+        logger.critical(
+            "Scheduler task exited — schedules and heartbeat are DEAD",
+            exc_info=task.exception(),
+        )
+
+    scheduler_task.add_done_callback(_scheduler_died)
     logger.info("Scheduler background task created")
 
     # Start webhook server
     webhook_server = WebhookServer()
     webhook_server.start(asyncio.get_running_loop(), orchestrator)
     application.bot_data["webhook_server"] = webhook_server
+
+    # Deliver startup warnings (webhook bind failure, migration failure, ...)
+    # immediately rather than waiting up to 5 min for the first heartbeat.
+    if orchestrator.startup_warnings:
+        pending, orchestrator.startup_warnings[:] = (
+            list(orchestrator.startup_warnings), [])
+
+        async def _flush_now(messages=pending):
+            for message in messages:
+                try:
+                    await send_to_user(f"⚠️ {message}")
+                except Exception:
+                    logger.exception("Immediate startup-warning delivery failed")
+                    orchestrator.startup_warnings.append(message)  # heartbeat retries
+
+        application.bot_data["startup_warning_task"] = asyncio.create_task(_flush_now())
+
+
+async def post_shutdown(application: Application):
+    """Clean up on SIGTERM/SIGINT: scheduler task, webhook thread, sub-agents."""
+    task = application.bot_data.get("scheduler_task")
+    if task and not task.done():
+        task.cancel()
+
+    webhook_server = application.bot_data.get("webhook_server")
+    if webhook_server:
+        try:
+            webhook_server.stop()
+        except Exception:
+            logger.exception("Webhook server shutdown failed")
+
+    try:
+        from agent.spawner import terminate_all
+        n = await terminate_all()
+        if n:
+            logger.info("Terminated %d sub-agent(s) during shutdown", n)
+    except Exception:
+        logger.exception("Sub-agent cleanup failed during shutdown")
 
 
 def main():
@@ -320,21 +372,32 @@ def main():
                  "CALENDAR_BOT_ID",
                  "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
                  "LINKEDIN_COOKIE",
+                 "CLAUDE_CODE_OAUTH_TOKEN",
                  "LOCAL_LLM_BASE_URL", "LOCAL_LLM_MODEL", "LOCAL_LLM_API_KEY"):
         if secrets.get(key):
             os.environ[key] = secrets[key]
 
     # Apply pending knowledge-layer migrations before anything reads the DB.
+    migration_warning = None
     try:
         applied = knowledge_db.run_migrations()
         if applied:
             logger.info("Knowledge migrations applied: %s", ", ".join(applied))
-    except Exception:
+    except Exception as e:
         logger.exception("Knowledge migrations failed")
+        migration_warning = (
+            f"Knowledge migrations FAILED — DB features may misbehave: {e}"
+        )
 
     orchestrator = Orchestrator(authorized_user_id=secrets["TELEGRAM_USER_ID"])
+    if migration_warning:
+        orchestrator.startup_warnings.append(migration_warning)
 
-    app = Application.builder().token(secrets["TELEGRAM_BOT_TOKEN"]).post_init(post_init).build()
+    app = (Application.builder()
+           .token(secrets["TELEGRAM_BOT_TOKEN"])
+           .post_init(post_init)
+           .post_shutdown(post_shutdown)
+           .build())
     app.bot_data["orchestrator"] = orchestrator
 
     # Onboarding conversation handler — must be registered before the catch-all

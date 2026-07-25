@@ -64,6 +64,64 @@ class TestIsDue(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.scheduler._is_due(s, _utc(9))
 
+    def test_recent_failed_attempt_not_due(self):
+        # last_attempt survives a failed/interrupted run — back off 30 min.
+        now = _utc(9)
+        s = {"trigger": "daily", "at_hour": 8,
+             "last_attempt": (now - timedelta(minutes=10)).isoformat()}
+        self.assertFalse(self.scheduler._is_due(s, now))
+
+    def test_old_failed_attempt_due_again(self):
+        now = _utc(9)
+        s = {"trigger": "daily", "at_hour": 8,
+             "last_attempt": (now - timedelta(minutes=45)).isoformat()}
+        self.assertTrue(self.scheduler._is_due(s, now))
+
+    def test_recent_attempt_blocks_interval_too(self):
+        now = _utc(9)
+        s = {"trigger": "interval", "interval_minutes": 5,
+             "last_attempt": (now - timedelta(minutes=6)).isoformat()}
+        self.assertFalse(self.scheduler._is_due(s, now))
+
+
+class TestMarkRan(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.path = Path(self.tmpdir.name) / "s.json"
+        self.scheduler = Scheduler(orchestrator=None)
+
+    def _write(self, data):
+        import json
+        self.path.write_text(json.dumps(data))
+
+    def _read(self):
+        import json
+        return json.loads(self.path.read_text())
+
+    def test_mark_ran_sets_last_run_and_clears_attempt(self):
+        now = _utc(9)
+        self._write({"name": "s", "trigger": "daily", "at_hour": 8,
+                     "last_attempt": now.isoformat()})
+        self.scheduler._mark_ran(self.path, now)
+        data = self._read()
+        self.assertEqual(data["last_run"], now.isoformat())
+        self.assertNotIn("last_attempt", data)
+
+    def test_mark_attempt_sets_last_attempt(self):
+        now = _utc(9)
+        self._write({"name": "s", "trigger": "daily", "at_hour": 8})
+        self.scheduler._mark_attempt(self.path, now)
+        self.assertEqual(self._read()["last_attempt"], now.isoformat())
+
+    def test_mark_ran_leaves_no_tmp_file(self):
+        now = _utc(9)
+        self._write({"name": "s", "trigger": "daily", "at_hour": 8})
+        self.scheduler._mark_ran(self.path, now)
+        self.assertEqual(sorted(p.name for p in self.path.parent.iterdir()),
+                         ["s.json"])
+
 
 class TestValidateSchedule(unittest.TestCase):
     def _valid(self):

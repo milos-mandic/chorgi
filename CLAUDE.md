@@ -16,6 +16,7 @@ Personal assistant agent harness. Telegram interface, Haiku for routing/instant 
 - `agent/spawner.py` — Claude Code sub-agent launcher (`--cwd <skill_dir>`)
 - `agent/scheduler.py` — Heartbeat loop (5 min), scheduled task execution, schedule validation
 - `agent/memory.py` — Context assembly, short-term pruning (long-term promotion deprecated)
+- `agent/backup.py` — Nightly snapshot of knowledge.db + schedules + memory + workspaces to `.personal/backups/` (7-day retention)
 - `agent/knowledge/` — SQLite durable store: people, interactions, inbox, wiki (+ Haiku clustering)
 - `agent/haiku.py` — Haiku classify+respond
 - `agent/api_client.py` — Anthropic HTTP client with retry/backoff

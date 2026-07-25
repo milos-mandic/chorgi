@@ -13,6 +13,36 @@ logger = logging.getLogger(__name__)
 # Resolve claude binary at import time so launchd's minimal PATH doesn't matter
 CLAUDE_BIN = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
+# Live sub-agent processes, so shutdown can terminate them gracefully instead
+# of launchd SIGKILLing them mid-write.
+_live_processes: set = set()
+
+
+async def terminate_all(grace_seconds: float = 5.0) -> int:
+    """SIGTERM all live sub-agents, then SIGKILL stragglers. Returns count."""
+    procs = [p for p in list(_live_processes) if p.returncode is None]
+    if not procs:
+        return 0
+    logger.info("Terminating %d live sub-agent(s)", len(procs))
+    for p in procs:
+        try:
+            p.terminate()
+        except ProcessLookupError:
+            pass
+    _, pending = await asyncio.wait(
+        [asyncio.ensure_future(p.wait()) for p in procs],
+        timeout=grace_seconds,
+    )
+    for p in procs:
+        if p.returncode is None:
+            try:
+                p.kill()
+            except ProcessLookupError:
+                pass
+    for fut in pending:
+        fut.cancel()
+    return len(procs)
+
 
 async def spawn_sub_agent(
     skill_config: dict,
@@ -93,6 +123,7 @@ async def spawn_sub_agent(
             cwd=skill_dir,
             env=env,
         )
+        _live_processes.add(process)
         stdout, stderr = await asyncio.wait_for(
             process.communicate(input=prompt.encode()),
             timeout=skill_config.get("timeout_seconds", 120),
@@ -139,3 +170,5 @@ async def spawn_sub_agent(
         elapsed = time.monotonic() - start
         logger.error(f"Sub-agent '{skill_name}' error after {elapsed:.1f}s: {e}")
         return {"error": True, "message": str(e), "elapsed_s": round(elapsed, 1)}
+    finally:
+        _live_processes.discard(process)

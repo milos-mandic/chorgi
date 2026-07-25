@@ -38,10 +38,23 @@ def cmd_search(args):
         print(json.dumps(results, indent=2))
 
 
+def _send_or_die(to, subject, body):
+    """Send with a clear failure message so the sub-agent reports honestly."""
+    import smtplib
+    try:
+        return email_client.send_email(to, subject, body)
+    except smtplib.SMTPAuthenticationError:
+        print("Send failed: Gmail app password rejected — check GMAIL_APP_PASSWORD.",
+              file=sys.stderr)
+        sys.exit(1)
+    except (smtplib.SMTPException, OSError) as e:
+        print(f"Send failed (transient — retry may work): {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_send(args):
     """Send an email."""
-    result = email_client.send_email(args.to, args.subject, args.body)
-    print(result)
+    print(_send_or_die(args.to, args.subject, args.body))
 
 
 def cmd_draft(args):
@@ -87,8 +100,7 @@ def cmd_send_draft(args):
         sys.exit(1)
 
     data = json.loads(draft_path.read_text())
-    result = email_client.send_email(data["to"], data["subject"], data["body"])
-    print(result)
+    print(_send_or_die(data["to"], data["subject"], data["body"]))
     # Remove sent draft
     draft_path.unlink()
     print(f"Draft {draft_path.name} removed after sending.")

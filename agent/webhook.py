@@ -35,10 +35,12 @@ import hmac
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -90,7 +92,15 @@ class WebhookServer:
         self._loop = loop
         self._orchestrator = orchestrator
 
-        port = int(os.environ.get("WEBHOOK_PORT", "8443"))
+        try:
+            port = int(os.environ.get("WEBHOOK_PORT", "8443"))
+        except ValueError:
+            # A typo in secrets.env must not crash startup into a launchd loop.
+            logger.error(
+                "Invalid WEBHOOK_PORT %r — falling back to 8443",
+                os.environ.get("WEBHOOK_PORT"),
+            )
+            port = 8443
         server_self = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -123,9 +133,7 @@ class WebhookServer:
                 self.wfile.write(data)
 
             def _read_body(self) -> bytes:
-                length = int(self.headers.get("Content-Length", 0))
-                if length > MAX_BODY_SIZE:
-                    return b""
+                length = _parse_content_length(self.headers.get("Content-Length"))
                 return self.rfile.read(length) if length > 0 else b""
 
             def _read_json(self):
@@ -153,7 +161,7 @@ class WebhookServer:
                 if parts is not None:
                     _sec, route = parts
                     if route == "health":
-                        self._send_json(200, {"status": "ok"})
+                        self._send_json(200, server_self.health_payload())
                     else:
                         self.send_response(404); self.end_headers()
                     return
@@ -307,19 +315,45 @@ class WebhookServer:
                 status, payload = api_handlers.api_write(path, method, body, server_self)
                 self._send_json(status, payload)
 
-        # Kill any stale process holding the port (e.g. previous bot instance)
+        # Kill any stale bot instance holding the port. Only processes that are
+        # verifiably a previous chorgi bot — SIGKILLing an arbitrary process
+        # that happens to hold the port could corrupt unrelated state.
         result = subprocess.run(["/usr/sbin/lsof", "-ti", f":{port}"], capture_output=True, text=True)
         if result.stdout.strip():
             my_pid = str(os.getpid())
+            killed_any = False
             for pid in result.stdout.strip().split("\n"):
                 pid = pid.strip()
-                if pid and pid != my_pid:
-                    logger.warning("Killing stale process %s on port %d", pid, port)
-                    try:
-                        os.kill(int(pid), 9)
-                    except (ProcessLookupError, ValueError):
-                        pass
-            time.sleep(0.5)
+                if not pid or pid == my_pid:
+                    continue
+                ps = subprocess.run(
+                    ["/bin/ps", "-p", pid, "-o", "command="],
+                    capture_output=True, text=True,
+                )
+                if "chorgi_bot/agent/main.py" not in ps.stdout:
+                    logger.warning(
+                        "Port %d held by non-bot process %s (%s) — not killing; "
+                        "bind will likely fail", port, pid, ps.stdout.strip()[:120],
+                    )
+                    continue
+                logger.warning("Terminating stale bot instance %s on port %d", pid, port)
+                try:
+                    os.kill(int(pid), signal.SIGTERM)
+                    killed_any = True
+                except (ProcessLookupError, ValueError):
+                    pass
+            if killed_any:
+                time.sleep(1.0)
+                # SIGKILL any that ignored SIGTERM
+                still = subprocess.run(["/usr/sbin/lsof", "-ti", f":{port}"], capture_output=True, text=True)
+                for pid in still.stdout.strip().split("\n"):
+                    pid = pid.strip()
+                    if pid and pid != my_pid:
+                        try:
+                            os.kill(int(pid), signal.SIGKILL)
+                        except (ProcessLookupError, ValueError):
+                            pass
+                time.sleep(0.5)
 
         try:
             self._server = _ReusableHTTPServer(("0.0.0.0", port), Handler)
@@ -338,6 +372,22 @@ class WebhookServer:
         )
         self._thread.start()
         logger.info("Webhook server started on port %d", port)
+
+    def health_payload(self) -> dict:
+        """Liveness with substance: heartbeat age/duration + agent slots."""
+        payload = {"status": "ok"}
+        orch = self._orchestrator
+        sched = getattr(orch, "scheduler", None) if orch else None
+        if sched is not None and getattr(sched, "last_heartbeat_at", None):
+            age = (datetime.now(timezone.utc) - sched.last_heartbeat_at).total_seconds()
+            payload["last_heartbeat_age_s"] = round(age)
+            payload["heartbeat_duration_s"] = round(
+                sched.last_heartbeat_duration_s or 0, 1)
+            if age > 15 * 60:
+                payload["status"] = "degraded"
+        if orch is not None and hasattr(orch, "_semaphore"):
+            payload["agent_slots_free"] = orch._semaphore._value
+        return payload
 
     def stop(self) -> None:
         if self._server:
@@ -384,6 +434,17 @@ def _log_future_error(future):
         future.result()
     except Exception:
         logger.error("Webhook skill trigger failed", exc_info=True)
+
+
+def _parse_content_length(value) -> int:
+    """Safe Content-Length parse: garbage or oversized headers read as 0."""
+    try:
+        length = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if length < 0 or length > MAX_BODY_SIZE:
+        return 0
+    return length
 
 
 def _parse_secret_path(path: str, secret: str) -> tuple[str, str] | None:

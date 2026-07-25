@@ -28,14 +28,14 @@ def _get_credentials() -> tuple[str, str]:
 
 def _connect_imap() -> imaplib.IMAP4_SSL:
     addr, pw = _get_credentials()
-    conn = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+    conn = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
     conn.login(addr, pw)
     return conn
 
 
 def _connect_smtp() -> smtplib.SMTP:
     addr, pw = _get_credentials()
-    conn = smtplib.SMTP("smtp.gmail.com", 587)
+    conn = smtplib.SMTP("smtp.gmail.com", 587, timeout=30)
     conn.ehlo()
     conn.starttls()
     conn.ehlo()
@@ -103,14 +103,16 @@ def fetch_unread(count: int = 10) -> list[dict]:
     conn = _connect_imap()
     try:
         conn.select("INBOX")
-        _, data = conn.search(None, "UNSEEN")
+        # UID commands, not sequence numbers — sequence numbers shift when
+        # messages are expunged, silently pointing at the wrong email.
+        _, data = conn.uid("search", None, "UNSEEN")
         uids = data[0].split()
         if not uids:
             return []
         uids = uids[-count:]
         results = []
         for uid in reversed(uids):
-            _, msg_data = conn.fetch(uid, "(BODY.PEEK[])")
+            _, msg_data = conn.uid("fetch", uid, "(BODY.PEEK[])")
             if msg_data[0] is None:
                 continue
             msg = email.message_from_bytes(msg_data[0][1])
@@ -129,14 +131,14 @@ def fetch_recent(count: int = 10) -> list[dict]:
     conn = _connect_imap()
     try:
         conn.select("INBOX")
-        _, data = conn.search(None, "ALL")
+        _, data = conn.uid("search", None, "ALL")
         uids = data[0].split()
         if not uids:
             return []
         uids = uids[-count:]
         results = []
         for uid in reversed(uids):
-            _, msg_data = conn.fetch(uid, "(BODY.PEEK[])")
+            _, msg_data = conn.uid("fetch", uid, "(BODY.PEEK[])")
             if msg_data[0] is None:
                 continue
             msg = email.message_from_bytes(msg_data[0][1])
@@ -156,14 +158,14 @@ def search_emails(query: str, max_results: int = 10) -> list[dict]:
     try:
         conn.select("INBOX")
         criteria = f'(OR SUBJECT "{query}" FROM "{query}")'
-        _, data = conn.search(None, criteria)
+        _, data = conn.uid("search", None, criteria)
         uids = data[0].split()
         if not uids:
             return []
         uids = uids[-max_results:]
         results = []
         for uid in reversed(uids):
-            _, msg_data = conn.fetch(uid, "(BODY.PEEK[])")
+            _, msg_data = conn.uid("fetch", uid, "(BODY.PEEK[])")
             if msg_data[0] is None:
                 continue
             msg = email.message_from_bytes(msg_data[0][1])
@@ -182,7 +184,7 @@ def read_email(uid: str, max_chars: int = 4000) -> dict:
     conn = _connect_imap()
     try:
         conn.select("INBOX")
-        _, msg_data = conn.fetch(uid.encode(), "(RFC822)")
+        _, msg_data = conn.uid("fetch", uid, "(RFC822)")
         if msg_data[0] is None:
             return {"error": f"Email UID {uid} not found"}
         msg = email.message_from_bytes(msg_data[0][1])

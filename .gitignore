@@ -23,3 +23,6 @@ env/
 .DS_Store
 Thumbs.db
 *.lock
+agent/knowledge/knowledge.db
+*.db-wal
+*.db-shm
