@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "posts": [
+    {
+      "platform": "linkedin",
+      "scheduled_at": "2026-09-21 08:30",
+      "status": "ready",
+      "text": "𝗧𝗵𝗲 𝗯𝗲𝘀𝘁 𝗱𝗲𝗽𝗹𝗼𝘆𝗺𝗲𝗻𝘁𝘀 𝗜'𝘃𝗲 𝘀𝗲𝗲𝗻 𝘀𝘁𝗮𝗿𝘁𝗲𝗱 𝘄𝗶𝘁𝗵 𝗮 𝗱𝗮𝘆 𝗼𝗳 𝗹𝗶𝘀𝘁𝗲𝗻𝗶𝗻𝗴.\n\nNo laptops open. No architecture diagrams.\n\nJust sitting next to the people who do the work and asking:\n\n→ Where do you copy-paste between systems?\n→ What do you check twice because you don't trust it?\n→ What would you stop doing tomorrow if you could?\n\nThe answers are the roadmap.\n\nThe code is the easy part.",
+      "notes": "Example post — Unicode bold hook, arrows, blank lines between paragraphs."
+    },
+    {
+      "platform": "substack_note",
+      "scheduled_at": "2026-09-21 12:00",
+      "status": "ready",
+      "text": "Integration, not intelligence, is where most AI projects stall.\n\nThis week's issue breaks down the three integration patterns I keep seeing in the field — and the one that quietly fails at scale."
+    },
+    {
+      "platform": "linkedin",
+      "scheduled_at": "2026-09-23 08:30",
+      "status": "draft",
+      "text": "Unpopular opinion: a demo that works on the first try is a warning sign.\n\nIt means nobody tried to break it.\n\nBefore every client demo I spend 30 minutes feeding it the ugliest real data I can find. Half the time something falls over.\n\nBetter in my kitchen than in their boardroom. 🍳",
+      "image": {
+        "data_uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQMYkBAAE0ALVMFc7eAAAAAElFTkSuQmCC",
+        "alt": "Placeholder image (1×1 pixel)"
+      }
+    },
+    {
+      "platform": "substack_note",
+      "scheduled_at": "2026-09-24 18:00",
+      "text": "Reading list for the weekend 👇\n\n1. How FDE teams price discovery work\n2. Why agent demos rarely survive procurement\n3. A good essay on writing runbooks people actually read"
+    },
+    {
+      "platform": "linkedin",
+      "scheduled_at": "2026-09-25 08:30",
+      "status": "ready",
+      "text": "Three questions I ask before touching a client's codebase:\n\n1. Who gets paged when this breaks?\n2. What did the last person who tried this learn?\n3. What does \"done\" look like to the person paying for it?\n\nIf nobody can answer #3, that's the first deliverable."
+    }
+  ]
+}

@@ -20,6 +20,8 @@ def _make_tree(base: Path):
     (base / "schedules" / "s.json").write_text('{"name": "s"}\n')
     (base / "skills" / "tasks" / "workspace").mkdir(parents=True)
     (base / "skills" / "tasks" / "workspace" / "tasks.json").write_text("[]\n")
+    (base / "skills" / "social" / "workspace" / "images").mkdir(parents=True)
+    (base / "skills" / "social" / "workspace" / "images" / "sp_1_abc.png").write_bytes(b"png")
 
     db = sqlite3.connect(str(base / ".personal" / "knowledge.db"))
     db.execute("CREATE TABLE t (x INTEGER)")
@@ -49,6 +51,7 @@ class TestRunBackup(unittest.TestCase):
         self.assertTrue((dest / "memory" / "short_term.md").exists())
         self.assertTrue(
             (dest / "workspaces" / "tasks" / "tasks.json").exists())
+        self.assertEqual((dest / "social_images" / "sp_1_abc.png").read_bytes(), b"png")
         self.assertIn("knowledge.db", summary)
 
     def test_prunes_old_backups(self):

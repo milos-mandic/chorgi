@@ -14,17 +14,18 @@ Personal assistant agent harness. Telegram interface, Haiku for routing/instant 
 - `agent/main.py` — Entry point (Telegram bot + scheduler + webhook; rotating log setup)
 - `agent/orchestrator.py` — Message routing, sub-agent lifecycle, schedule saving
 - `agent/spawner.py` — Claude Code sub-agent launcher (`--cwd <skill_dir>`)
-- `agent/scheduler.py` — Heartbeat loop (5 min), scheduled task execution, schedule validation
+- `agent/scheduler.py` — Heartbeat loop (5 min), scheduled task execution, schedule validation, social post nudges
 - `agent/memory.py` — Context assembly, short-term pruning (long-term promotion deprecated)
-- `agent/backup.py` — Nightly snapshot of knowledge.db + schedules + memory + workspaces to `.personal/backups/` (7-day retention)
+- `agent/backup.py` — Nightly snapshot of knowledge.db + schedules + memory + workspaces + social images to `.personal/backups/` (7-day retention)
 - `agent/knowledge/` — SQLite durable store: people, interactions, inbox, wiki (+ Haiku clustering)
 - `agent/haiku.py` — Haiku classify+respond
 - `agent/api_client.py` — Anthropic HTTP client with retry/backoff
-- `agent/webhook.py` — HTTP server: Fathom webhook, dashboard static + SSE chat
+- `agent/webhook.py` — HTTP server: Fathom webhook, dashboard static + SSE chat, social images
 - `agent/api_handlers.py` — Dashboard JSON API route handlers
-- `agent/ui/` — Dashboard frontend (tasks, wiki, inbox, contacts, chat)
+- `agent/ui/` — Dashboard frontend (tasks, social, watch, shopping, contacts, chat)
 - `agent/local_chat.py` — Local LLM chat backend
-- `skills/_shared.py` — Atomic + flock-locked JSON helpers shared by skill CLIs
+- `skills/_shared.py` — Atomic + flock-locked JSON helpers, LOCAL_TZ datetime parsing, shared by skill CLIs
+- `skills/social/schema/social_posts.v1.schema.json` — Import contract for the Social board (LinkedIn + Substack Notes)
 - `docs/ARCHITECTURE.md` — Detailed module reference
 
 ## Message Routing
@@ -39,7 +40,7 @@ Personal assistant agent harness. Telegram interface, Haiku for routing/instant 
 
 Each skill has: `CLAUDE.md` (behavior), `config.json` (routing metadata + tool/turn/timeout limits), `workspace/` (data + scratch, gitignored). Sub-agents run with `--cwd <skill_dir>` so they read the skill's own CLAUDE.md. CLIs that mutate workspace JSON go through `skills/_shared.py` (atomic writes + cross-process file lock).
 
-Current skills: `general`, `fathom`, `email`, `calendar`, `research`, `linkedin`, `bookmarks`, `tasks`, `post_meeting`.
+Current skills: `general`, `fathom`, `email`, `calendar`, `research`, `linkedin`, `bookmarks`, `tasks`, `post_meeting`, `social`.
 
 ## Schedules
 

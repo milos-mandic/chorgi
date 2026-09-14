@@ -133,6 +133,7 @@ class Scheduler:
         await self._check_bookmark_digest()
         await self._sweep_wiki()
         await self._roll_over_tasks()
+        await self._nudge_social_posts()
 
         logger.info("Heartbeat complete")
 
@@ -276,6 +277,38 @@ class Scheduler:
                 logger.info(f"Task rollover moved {n} task(s)")
         except Exception as e:
             logger.warning(f"Task rollover failed: {e}")
+
+    async def _nudge_social_posts(self):
+        """Telegram the text of each social post whose scheduled time has come.
+
+        Header, then the post text as its own verbatim message (so it copies
+        cleanly on a phone), then the image. A post is marked nudged once its
+        text is delivered, so a failed photo never re-sends the text.
+        """
+        orch = self.orchestrator
+        if not getattr(orch, "send_raw_to_user", None):
+            return
+        try:
+            from agent.api_handlers import _get_social_cli
+            sc = _get_social_cli()
+            due = await asyncio.to_thread(sc.due_for_nudge)
+        except Exception as e:
+            logger.warning(f"Social nudge check failed: {e}")
+            return
+        for post in due:
+            try:
+                await orch.send_raw_to_user(sc.nudge_header(post))
+                await orch.send_raw_to_user(post["text"])
+                await asyncio.to_thread(sc.mark_nudged, post["id"])
+            except Exception as e:
+                logger.warning(f"Social nudge failed for {post.get('id')}: {e}")
+                continue
+            path = sc.image_path((post.get("image") or {}).get("file"))
+            if path is not None and path.is_file() and orch.send_photo_to_user:
+                try:
+                    await orch.send_photo_to_user(path, None)
+                except Exception as e:
+                    logger.warning(f"Social nudge image failed for {post['id']}: {e}")
 
     async def _run_internal(self, prompt: str) -> str:
         """Internal-type schedules: pure-Python jobs, no LLM call by the dispatcher."""

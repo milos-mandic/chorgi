@@ -47,6 +47,8 @@ HTTP plumbing on a daemon thread (ThreadingHTTPServer, default port 8443).
 - Secret-prefixed machine routes: /<WEBHOOK_SECRET>/health, /<WEBHOOK_SECRET>/fathom
 - Fathom: HMAC-SHA256 (Svix format) verification → save transcript → stage meeting content → trigger post_meeting skill
 - Serves the dashboard UI (agent/ui/) and dispatches /api/* to api_handlers
+- Serves social post images at /social-images/<name> (name validated by social_cli.image_path; content-hashed, cached privately)
+- Request bodies are capped at 1MB, or 25MB for /api/social/import and /api/social/posts/<id>/image (base64 images); a larger Content-Length gets 413
 - SSE streaming for local chat lives here (needs raw socket access)
 - On port-bind failure, queues a startup warning the heartbeat delivers via Telegram
 
@@ -54,11 +56,19 @@ HTTP plumbing on a daemon thread (ThreadingHTTPServer, default port 8443).
 Dashboard JSON API as pure (status, payload) functions.
 - api_get(path) / api_write(path, method, body, server) — route dispatch
 - State + mutations for tasks/bookmarks (shares the skill CLIs' write path under _data_lock + skills/_shared.file_lock), inbox accept/reject, wiki topics, local chat conversations, /api/trigger for sub-agents
+- /api/social/* — a thin mapping onto skills/social/social_cli.py (create/patch/delete, image attach/remove, move, import preview/apply); social_cli.SocialError carries the HTTP status (400/404/409)
 
 ### agent/ui/
 Vanilla JS dashboard (index.html, app.js, style.css) served by webhook.py.
-Tabs: tasks week calendar, wiki, inbox, contacts, linkedin calendar, chat. (Bookmarks
-have no tab of their own; they surface through the wiki. The /api/bookmarks routes remain.)
+Tabs: tasks week calendar, social posts board, watch, shopping, contacts, chat (plus
+tab-less wiki and inbox pages). Bookmarks have no tab of their own; they surface through
+the wiki. The /api/bookmarks routes remain.
+The social board is Mon–Sun columns × one row per platform (LinkedIn, Substack Notes),
+at most one post per cell. Dragging a card to another cell POSTs /api/social/move; the
+post keeps its time of day, and an occupied target cell swaps the two posts. The editor
+copies text with the Clipboard API (a hidden-textarea fallback), never trimming it, and
+uploads images as base64 data URIs. "Import JSON" previews a contract document (new /
+replace / conflict / error per post) before applying it all or nothing.
 The task board is Mon–Sun only (no Pending column); the heartbeat's task rollover
 keeps every open task on a day. Task cards drag between days and to a position within a day. A drop PATCHes the
 destination column's whole id list as `order`; the server assigns `sort_order`
@@ -88,13 +98,14 @@ Central coordinator.
 
 ### agent/scheduler.py
 - Scheduler(orchestrator) — heartbeat loop every 300s
-- _heartbeat() — flush startup warnings, prune, check scratch, reload skills, check emails, bookmark digest, wiki sweep, task rollover (task_cli.roll_over: open tasks dated before this Monday → this Monday with carry_count+1, undated → today; calendar events untouched)
+- _heartbeat() — flush startup warnings, prune, check scratch, reload skills, check emails, bookmark digest, wiki sweep, task rollover (task_cli.roll_over: open tasks dated before this Monday → this Monday with carry_count+1, undated → today; calendar events untouched), social nudges (_nudge_social_posts: each unposted post whose time passed within the last 12h gets a Telegram header, then its text verbatim via orchestrator.send_raw_to_user, then its image; marked nudged once the text is delivered)
 - _check_schedules() — scan schedules/*.json, evaluate triggers, execute; each file isolated so one malformed schedule can't abort the pass
 - validate_schedule(schedule) — schema check + string-int coercion, used at save time
 
 ### agent/main.py
 Entry point. Loads secrets, creates Orchestrator, builds Telegram Application.
 - Handler order: ConversationHandler, text MessageHandler, voice MessageHandler
+- post_init wires orchestrator.send_to_user (markdown-stripped), send_raw_to_user (verbatim, for copyable content) and send_photo_to_user
 - Logging: RotatingFileHandler ~/.chorgi_bot.log (10MB x 5); launchd captures crash stderr to ~/.chorgi_bot.stderr.log; httpx capped at WARNING
 
 ## Skills
@@ -104,6 +115,7 @@ JSON persistence helpers shared by skill CLIs and the agent process.
 - save_json — atomic (tmp + os.replace)
 - file_lock(path) — cross-process flock on a sidecar .lock file; CLIs hold it for the whole command, agent-side mutations hold it across each RMW
 - locked_json(path, default) — RMW context manager
+- parse_local_datetime(value) — 'YYYY-MM-DD HH:MM[:SS]' (optional offset) → aware LOCAL_TZ datetime; used by the tasks and social skills
 
 ### Email Skill
 - email_client.py — stdlib-only IMAP/SMTP functions
@@ -120,6 +132,12 @@ JSON persistence helpers shared by skill CLIs and the agent process.
 - task_cli.py — add/list/done/remove/update/pending-json/clear-done/free-slots
 - Scheduling is decided at task-creation time: `--scheduled-at` creates the linked calendar event immediately; `free-slots` lets the agent pick a real open slot for loose requests. No batch/auto planner.
 - Deliberate cross-skill dependency: scheduling commands subprocess calendar_cli.py and parse its JSON stdout
+
+### Social Skill
+- social_cli.py — storage + CLI (schema, validate, import [--dry-run] [--overwrite], list, get, set-status) over workspace/posts.json and workspace/images/; the dashboard imports the same functions
+- schema/social_posts.v1.schema.json — the batch-import contract (JSON Schema 2020-12); validate_doc() is a stdlib validator that reads its enums/limits from that file, and also rejects duplicate platform+day slots, whitespace-only text, bad base64 and image bytes that don't match the declared type
+- Invariants: one post per platform per Berlin calendar day; text stored byte-exact; scheduled_at stored as Berlin ISO with offset; LinkedIn text ≤ 3000 code points
+- Images are content-hash-named files, deleted when replaced or when their post is deleted; backed up nightly (backup.py → social_images/)
 
 ### Post-Meeting Skill
 - Triggered by the Fathom webhook with a pre-allocated interaction_id + transcript path
@@ -140,4 +158,4 @@ Stdlib unittest, no network, temp dirs only:
 python3 -m unittest discover tests
 ```
 
-Covers: scheduler triggers + validation, _shared atomic/locked JSON (incl. multiprocess flock contention), knowledge models CRUD, ULIDs, api_client retry, linkedin_cli parser.
+Covers: scheduler triggers + validation, _shared atomic/locked JSON (incl. multiprocess flock contention), knowledge models CRUD, ULIDs, api_client retry, linkedin_cli parser, social_cli (exact-text round trip, slot conflicts, move/swap incl. DST, images, contract validation, import preview/apply, nudges) and the /api/social routes, webhook body limits, backup.

@@ -39,6 +39,10 @@ class Orchestrator:
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         self.memory = Memory(PERSONAL_DIR)
         self.send_to_user = None  # Set by main.py after bot is ready
+        # Verbatim senders (no markdown stripping) for content the user copies
+        # exactly, e.g. social post nudges. Also set by main.py.
+        self.send_raw_to_user = None
+        self.send_photo_to_user = None
         # Startup problems (e.g. webhook port bind failure) queue here;
         # the scheduler heartbeat flushes them to the user via Telegram.
         self.startup_warnings: list[str] = []

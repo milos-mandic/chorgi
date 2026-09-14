@@ -6,7 +6,6 @@ two can evolve separately. State helpers are importable so the UI shares the
 skill CLIs' write path.
 """
 
-import json
 import logging
 import sys
 import threading
@@ -23,8 +22,9 @@ _bookmarks_cli = None
 _watchlist_mod = None
 _shopping_mod = None
 _local_chat = None
+_social_cli = None
 
-# Single lock for all JSON mutations (tasks + bookmarks).
+# Single lock for all JSON mutations (tasks, bookmarks, social posts).
 # These files are tiny; a coarse lock keeps things simple and safe.
 # skills/_shared.file_lock adds cross-process exclusion on top (skill CLIs
 # running as sub-agent subprocesses mutate the same files).
@@ -41,6 +41,15 @@ def _get_task_cli():
         import task_cli as tc
         _task_cli = tc
     return _task_cli
+
+
+def _get_social_cli():
+    global _social_cli
+    if _social_cli is None:
+        sys.path.insert(0, str(BASE_DIR / "skills" / "social"))
+        import social_cli as sc
+        _social_cli = sc
+    return _social_cli
 
 
 def _get_bookmarks_cli():
@@ -97,8 +106,10 @@ def api_get(path: str) -> tuple[int, dict]:
         if path == "/api/shopping":
             sl = _get_shopping()
             return 200, {"shopping": sl.load_items()}
-        if path == "/api/linkedin/calendar":
-            return 200, _load_linkedin_calendar()
+        if path == "/api/social/posts":
+            return 200, {"posts": _get_social_cli().load_posts()}
+        if path == "/api/social/schema":
+            return 200, _get_social_cli().load_schema()
         if path == "/api/people":
             from agent.knowledge import models as km
             return 200, {"people": km.list_people()}
@@ -146,6 +157,10 @@ def api_write(path: str, method: str, body: dict | None, server) -> tuple[int, d
     to the async side (_trigger_skill / _trigger_wiki).
     """
     try:
+        # Social posts
+        if path.startswith("/api/social/"):
+            return _social_write(path, method, body)
+
         # Tasks
         if path == "/api/tasks" and method == "POST":
             if body is None:
@@ -327,6 +342,12 @@ def _build_state() -> dict:
         bookmarks = bc.load_bookmarks()
         watchlist = wl.load_watch_items()
         shopping = sl.load_items()
+    social_posts = []
+    try:
+        with _data_lock:
+            social_posts = _get_social_cli().load_posts()
+    except Exception as e:
+        logger.warning("Social posts unavailable: %s", e)
     people = []
     inbox = []
     try:
@@ -340,7 +361,7 @@ def _build_state() -> dict:
         "bookmarks": bookmarks,
         "watchlist": watchlist,
         "shopping": shopping,
-        "linkedin_week": _load_linkedin_calendar(),
+        "social_posts": social_posts,
         "people": people,
         "inbox": inbox,
         "now": datetime.now(timezone.utc).isoformat(),
@@ -687,11 +708,43 @@ def _get_wiki_topic(ident: str) -> dict | None:
     return topic
 
 
-def _load_linkedin_calendar() -> dict:
-    path = BASE_DIR / "skills" / "linkedin" / "workspace" / "content_calendar.json"
-    if not path.exists():
-        return {}
+def _social_write(path: str, method: str, body: dict | None) -> tuple[int, dict]:
+    """POST/PATCH/DELETE /api/social/... — thin mapping onto social_cli.
+
+    Refusals come back as SocialError carrying their own status (400 invalid,
+    404 missing, 409 slot taken).
+    """
+    sc = _get_social_cli()
+    if body is None:
+        return 400, {"error": "bad json"}
+    rest = path[len("/api/social/"):]
     try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
+        with _data_lock:
+            if rest == "posts" and method == "POST":
+                return 200, sc.create_post(body)
+            if rest == "move" and method == "POST":
+                return 200, sc.move_post(body.get("id"), body.get("platform"), body.get("date"))
+            if rest == "import" and method == "POST":
+                mode = body.get("mode", "preview")
+                overwrite = bool(body.get("overwrite"))
+                if mode == "preview":
+                    return 200, sc.preview_import(body.get("doc"), overwrite)
+                if mode == "apply":
+                    return 200, sc.apply_import(body.get("doc"), overwrite)
+                return 400, {"error": "mode must be 'preview' or 'apply'"}
+            if rest.startswith("posts/"):
+                post_id, _, sub = rest[len("posts/"):].partition("/")
+                if sub == "image":
+                    if method == "POST":
+                        return 200, sc.set_image(post_id, body.get("data_uri"), body.get("alt"))
+                    if method == "DELETE":
+                        return 200, sc.remove_image(post_id)
+                elif not sub:
+                    if method == "PATCH":
+                        return 200, sc.update_post(post_id, body)
+                    if method == "DELETE":
+                        sc.delete_post(post_id)
+                        return 200, {"deleted": True}
+    except sc.SocialError as e:
+        return e.status, e.payload()
+    return 404, {"error": "not found"}

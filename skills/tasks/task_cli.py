@@ -141,11 +141,7 @@ def cmd_add(args):
 
 def _parse_scheduled_at(value: str) -> datetime:
     """Parse a 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DDTHH:MM' string as local time."""
-    s = value.strip().replace("T", " ")
-    # tolerate trailing seconds
-    fmt = "%Y-%m-%d %H:%M:%S" if s.count(":") == 2 else "%Y-%m-%d %H:%M"
-    dt = datetime.strptime(s, fmt)
-    return dt.replace(tzinfo=_shared.LOCAL_TZ)
+    return _shared.parse_local_datetime(value)
 
 
 def normalize_scheduled_at(value: str) -> str:
