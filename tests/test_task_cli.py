@@ -11,6 +11,7 @@ import io
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -141,6 +142,50 @@ class TestParseScheduledAt(unittest.TestCase):
     def test_winter_is_cet(self):
         dt = task_cli._parse_scheduled_at("2026-01-20 15:00")
         self.assertEqual(dt.utcoffset().total_seconds(), 1 * 3600)  # +01:00
+
+
+class TestRollOver(unittest.TestCase):
+    # Wednesday; this week's Monday is 2026-09-14.
+    NOW = datetime(2026, 9, 16, 10, 0, tzinfo=CET)
+
+    def roll(self, *tasks):
+        tasks = [dict(t) for t in tasks]
+        return task_cli.roll_over_tasks(tasks, now=self.NOW), tasks
+
+    def test_past_week_moves_to_monday_keeping_time(self):
+        n, [t] = self.roll({"id": "a", "status": "scheduled", "carry_count": 1,
+                            "scheduled_at": "2026-09-10T17:30:00+02:00",
+                            "calendar_event_id": "ev", "sort_order": 3})
+        self.assertEqual(n, 1)
+        self.assertEqual(t["scheduled_at"], "2026-09-14T17:30:00+02:00")
+        self.assertEqual(t["carry_count"], 2)
+        self.assertEqual(t["calendar_event_id"], "ev")  # event is not touched
+        self.assertNotIn("sort_order", t)
+
+    def test_past_deadline_only_moves_to_monday_morning(self):
+        _, [t] = self.roll({"id": "a", "status": "pending", "deadline": "2026-09-01"})
+        self.assertEqual(t["scheduled_at"], "2026-09-14T09:00:00+02:00")
+        self.assertEqual(t["deadline"], "2026-09-01")
+        self.assertEqual(t["carry_count"], 1)
+
+    def test_undated_lands_on_today_without_carry(self):
+        _, [t] = self.roll({"id": "a", "status": "pending", "deadline": None, "carry_count": 0})
+        self.assertEqual(t["scheduled_at"], "2026-09-16T09:00:00+02:00")
+        self.assertEqual(t["carry_count"], 0)
+
+    def test_leaves_current_week_future_and_done_alone(self):
+        tasks = (
+            {"id": "tue", "status": "pending", "scheduled_at": "2026-09-15T09:00:00+02:00"},
+            {"id": "future", "status": "pending", "deadline": "2026-11-10"},
+            {"id": "done", "status": "done", "scheduled_at": "2026-09-01T09:00:00+02:00"},
+        )
+        n, out = self.roll(*tasks)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, list(tasks))
+
+    def test_idempotent(self):
+        _, tasks = self.roll({"id": "a", "status": "pending", "deadline": "2026-09-01"})
+        self.assertEqual(task_cli.roll_over_tasks(tasks, now=self.NOW), 0)
 
 
 if __name__ == "__main__":

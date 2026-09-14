@@ -20,6 +20,24 @@ EMAIL_CHECK_TIMEOUT = 120  # hard cap so a wedged IMAP call can't stall the hear
 VALID_TRIGGERS = {"daily", "interval"}
 VALID_TYPES = {"haiku", "sub_agent", "internal"}
 
+# Scheduled `haiku` tasks have no tools and no conversation partner: whatever
+# they emit is forwarded verbatim to the user. Without this framing the model
+# reads a prompt like "Remind Milos to..." as a task delegated to it and
+# replies that it can't send messages, instead of writing the reminder.
+SCHEDULED_HAIKU_SYSTEM = (
+    "You are generating the body of a scheduled notification for Milos. "
+    "Your output is delivered to him verbatim as a Telegram message.\n\n"
+    "Rules:\n"
+    "- Write the message itself. Never describe what you are about to do, "
+    "and never talk about yourself or your capabilities.\n"
+    "- You have no tools and cannot contact anyone. A prompt phrased as an "
+    "instruction (\"Remind Milos to X\", \"Tell him Y\") means: write that "
+    "message. Never reply that you are unable to send it.\n"
+    "- Address Milos directly as \"you\". Keep it to one or two short lines.\n"
+    "- No preamble, sign-off, offers of help, or follow-up questions.\n"
+    "- If there is genuinely nothing worth sending, output nothing at all."
+)
+
 
 def validate_schedule(schedule: dict) -> tuple[bool, str]:
     """Validate a schedule dict before it's written to schedules/.
@@ -114,6 +132,7 @@ class Scheduler:
         await self._check_emails()
         await self._check_bookmark_digest()
         await self._sweep_wiki()
+        await self._roll_over_tasks()
 
         logger.info("Heartbeat complete")
 
@@ -207,7 +226,8 @@ class Scheduler:
         task_type = schedule.get("type", "haiku")
         prompt = schedule.get("prompt", "")
         notify = schedule.get("notify_user", False)
-        silent_empty = schedule.get("silent_when_empty", False)
+        # NB: `silent_when_empty` is now the unconditional behaviour below; the
+        # key is still accepted on schedules for backward compatibility.
 
         logger.info(f"Executing schedule: {name}")
 
@@ -217,14 +237,14 @@ class Scheduler:
         elif task_type == "internal":
             result = await self._run_internal(prompt)
         else:
-            result = await self.orchestrator.haiku_query(prompt)
+            result = await self.orchestrator.haiku_query(prompt, system=SCHEDULED_HAIKU_SYSTEM)
 
         is_error = isinstance(result, str) and result.startswith("Error:")
         if is_error:
             logger.warning(f"Schedule {name} returned error: {result}")
 
         if notify and self.orchestrator.send_to_user:
-            if silent_empty and isinstance(result, str) and not result.strip():
+            if not is_error and not (isinstance(result, str) and result.strip()):
                 logger.info(f"Schedule {name}: empty result, skipping notification")
             elif is_error:
                 display = schedule.get("display_name") or name.replace("_", " ").title()
@@ -246,6 +266,16 @@ class Scheduler:
                 await wiki_mod.drain_dirty(limit=10)
         except Exception as e:
             logger.warning(f"Wiki sweep failed: {e}")
+
+    async def _roll_over_tasks(self):
+        """Carry unfinished tasks from past weeks onto this Monday; date undated ones."""
+        try:
+            from agent.api_handlers import _get_task_cli
+            n = await asyncio.to_thread(_get_task_cli().roll_over)
+            if n:
+                logger.info(f"Task rollover moved {n} task(s)")
+        except Exception as e:
+            logger.warning(f"Task rollover failed: {e}")
 
     async def _run_internal(self, prompt: str) -> str:
         """Internal-type schedules: pure-Python jobs, no LLM call by the dispatcher."""

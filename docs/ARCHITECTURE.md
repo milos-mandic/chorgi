@@ -57,7 +57,18 @@ Dashboard JSON API as pure (status, payload) functions.
 
 ### agent/ui/
 Vanilla JS dashboard (index.html, app.js, style.css) served by webhook.py.
-Tabs: tasks kanban, bookmarks, wiki, inbox, contacts, linkedin calendar, chat.
+Tabs: tasks week calendar, wiki, inbox, contacts, linkedin calendar, chat. (Bookmarks
+have no tab of their own; they surface through the wiki. The /api/bookmarks routes remain.)
+The task board is Mon–Sun only (no Pending column); the heartbeat's task rollover
+keeps every open task on a day. Task cards drag between days and to a position within a day. A drop PATCHes the
+destination column's whole id list as `order`; the server assigns `sort_order`
+0..n-1 from it. Done cards are pinned to the bottom of every column regardless of
+`sort_order`, and the drop position is clamped so that stays true. Dragging sends
+`sync_calendar:false` — the board never writes to Google Calendar. In the task
+editor, only the "Add to calendar" toggle (`calendar: true|false`) creates or
+deletes an event; setting a time alone never does (api_handlers._apply_schedule).
+`calendar_at` records the booked event time so a save with the toggle on moves an
+event that a drag left behind.
 Auth handled at the edge by Cloudflare Access (soft-warn locally).
 
 ### agent/local_chat.py
@@ -77,7 +88,7 @@ Central coordinator.
 
 ### agent/scheduler.py
 - Scheduler(orchestrator) — heartbeat loop every 300s
-- _heartbeat() — flush startup warnings, prune, check scratch, reload skills, check emails, bookmark digest, wiki sweep
+- _heartbeat() — flush startup warnings, prune, check scratch, reload skills, check emails, bookmark digest, wiki sweep, task rollover (task_cli.roll_over: open tasks dated before this Monday → this Monday with carry_count+1, undated → today; calendar events untouched)
 - _check_schedules() — scan schedules/*.json, evaluate triggers, execute; each file isolated so one malformed schedule can't abort the pass
 - validate_schedule(schedule) — schema check + string-int coercion, used at save time
 

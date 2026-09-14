@@ -22,7 +22,7 @@ Personal assistant agent harness. Telegram interface, Haiku for routing/instant 
 - `agent/api_client.py` — Anthropic HTTP client with retry/backoff
 - `agent/webhook.py` — HTTP server: Fathom webhook, dashboard static + SSE chat
 - `agent/api_handlers.py` — Dashboard JSON API route handlers
-- `agent/ui/` — Dashboard frontend (tasks, bookmarks, wiki, inbox, contacts, chat)
+- `agent/ui/` — Dashboard frontend (tasks, wiki, inbox, contacts, chat)
 - `agent/local_chat.py` — Local LLM chat backend
 - `skills/_shared.py` — Atomic + flock-locked JSON helpers shared by skill CLIs
 - `docs/ARCHITECTURE.md` — Detailed module reference

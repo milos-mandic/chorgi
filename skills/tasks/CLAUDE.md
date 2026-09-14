@@ -82,8 +82,10 @@ When the user tells you *when* a task should happen, your job is to turn that in
 - **Exact day + time** ("Tuesday at 3pm", "June 20 at 15:00") → resolve to the absolute date/time and `add ... --scheduled-at "2026-06-20 15:00"`. Done in one step.
 - **Relative** ("tomorrow at 9", "next Friday afternoon") → compute the absolute date yourself. If they gave a vague time-of-day ("afternoon", "morning"), pick a sensible concrete time (e.g. afternoon → 15:00, morning → 09:00).
 - **Loose window, no exact time** ("sometime next week", "this week", "Thursday at some point") → run `free-slots` over that window, pick the first open slot that fits, then `add ... --scheduled-at "<that slot>"`. This avoids double-booking.
-- **Only a date, truly no time intent** → use `--deadline` and leave the task Pending (no calendar event). Mention it's pending until they give a time.
-- **No date/time at all** → omit both; the task is Pending.
+- **Only a date, truly no time intent** → use `--deadline` (no calendar event). The task sits on that day in the dashboard until they give a time.
+- **No date/time at all** → omit both; the task lands on today in the dashboard.
+
+**Carry-over:** there is no Pending bucket — every open task sits on a day. Unfinished tasks from a past week are moved automatically to the Monday of the current week (their `carry_count` goes up). Their calendar events are not moved.
 
 After scheduling, report the concrete day, date, and time you booked (e.g. "Scheduled for Saturday June 20 at 3:00 PM").
 

@@ -216,10 +216,10 @@ class Orchestrator:
 
     # --- Helper methods for scheduler ---
 
-    async def haiku_query(self, prompt: str) -> str:
+    async def haiku_query(self, prompt: str, system: str = "") -> str:
         """Standalone Haiku call — returns raw text response."""
         text, usage = await call_haiku(
-            system="",
+            system=system,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1024,
         )

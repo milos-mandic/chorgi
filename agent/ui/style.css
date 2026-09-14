@@ -30,6 +30,11 @@
   --radius: 10px;
   --radius-lg: 14px;
 
+  /* Shell width — topbar, tabs and board share it so they stay aligned.
+     Wide enough for the task week grid's 8 columns; still capped so text
+     lines and the contacts table don't sprawl on an ultrawide display. */
+  --shell-max: 1800px;
+
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
   --shadow-md: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.08);
   --shadow-lg: 0 8px 16px rgba(16, 24, 40, 0.1), 0 20px 48px rgba(16, 24, 40, 0.14);
@@ -109,7 +114,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  max-width: 1440px;
+  max-width: var(--shell-max);
   margin: 0 auto;
   padding: 10px 24px 6px;
   padding-top: max(10px, env(safe-area-inset-top));
@@ -155,7 +160,7 @@ body {
 .tabs {
   display: flex;
   gap: 2px;
-  max-width: 1440px;
+  max-width: var(--shell-max);
   margin: 0 auto;
   padding: 0 16px;
   overflow-x: auto;
@@ -313,7 +318,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 /* ---------------- Layout ---------------- */
 
 main.board {
-  max-width: 1440px;
+  max-width: var(--shell-max);
   margin: 0 auto;
   padding: 24px;
 }
@@ -377,18 +382,35 @@ main.board {
 .empty-title { font-size: 14px; font-weight: 600; color: var(--text-2); }
 .empty-hint { font-size: 12.5px; color: var(--muted); max-width: 360px; }
 
-/* ---------------- Kanban ---------------- */
+/* ---------------- Task week calendar ---------------- */
 
-.kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.kanban-col {
+.week-nav { display: flex; align-items: center; gap: 6px; }
+.week-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  min-width: 152px;
+  text-align: center;
+}
+.week-nav button:not(.icon-btn) { font-size: 12px; padding: 3px 10px; }
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+}
+.week-col {
   background: var(--surface-2);
   border-radius: var(--radius);
-  padding: 12px;
+  padding: 12px 10px;
   min-height: 55vh;
   display: flex;
   flex-direction: column;
 }
-.kanban-col h3 {
+.week-col.is-weekend { background: color-mix(in srgb, var(--surface-2) 60%, var(--bg)); }
+.week-col.is-today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.week-col h3 {
   margin: 0 0 10px 0;
   padding: 0 2px;
   font-size: 11.5px;
@@ -399,26 +421,36 @@ main.board {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 6px;
 }
-.kanban-col h3 .col-title { display: flex; align-items: center; gap: 7px; }
-.kanban-col h3 .col-title::before {
-  content: "";
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
+.week-col h3 .col-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.week-col.is-today h3 { color: var(--accent); }
+.week-day-num {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
-.kanban-col[data-status="pending"] h3 .col-title::before { background: var(--med); }
-.kanban-col[data-status="scheduled"] h3 .col-title::before { background: var(--accent); }
-.kanban-col[data-status="done"] h3 .col-title::before { background: var(--low); }
-.kanban-col .count {
+.week-col.is-today .week-day-num { color: var(--accent); }
+.week-col .count {
   background: var(--surface);
   padding: 0 7px;
   border-radius: 99px;
   font-variant-numeric: tabular-nums;
   line-height: 18px;
+  flex-shrink: 0;
+}
+.week-col .count.zero { display: none; }
+
+/* Seven columns get unreadably narrow on laptops — wrap into two rows of four */
+@media (min-width: 721px) and (max-width: 1180px) {
+  .week-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .week-col { min-height: 26vh; }
 }
 
 .cards {
+  position: relative;  /* anchors .drop-indicator */
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -433,14 +465,38 @@ main.board {
   justify-content: center;
 }
 .cards:empty::after {
-  content: "No tasks";
+  content: "—";
   color: var(--faint);
   font-size: 12px;
   padding: 24px 0;
 }
+/* The column under the cursor. Softer than it once was — .drop-indicator now
+   carries the precise "it lands here", so this only has to say "this column". */
 .cards.drag-over {
   background: var(--accent-soft);
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Insertion line between two cards. Positioned absolutely so showing it never
+   reflows the cards it is measured against. */
+.drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.drop-indicator::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .card {
@@ -484,6 +540,12 @@ main.board {
   flex-wrap: wrap;
   align-items: center;
 }
+.card .meta .card-time {
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.card .meta .overdue { color: var(--danger); font-weight: 550; }
 .card .meta .tag,
 .tag {
   background: var(--surface-2);
@@ -500,50 +562,6 @@ main.board {
   .card:hover .actions { display: flex; }
 }
 
-/* ---------------- Bookmarks ---------------- */
-
-.bookmark-groups {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 14px;
-}
-.bookmark-group {
-  background: var(--surface-2);
-  padding: 12px 14px;
-  border-radius: var(--radius);
-}
-.bookmark-group h4 {
-  margin: 0 0 8px 0;
-  font-size: 11px;
-  font-weight: 650;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.bookmark {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 11px;
-  margin-bottom: 6px;
-  font-size: 12.5px;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.bookmark:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
-.bookmark a {
-  color: var(--link);
-  font-weight: 500;
-  text-decoration: none;
-  word-break: break-word;
-}
-.bookmark a:hover { text-decoration: underline; }
-.bookmark .notes { color: var(--muted); font-size: 11.5px; margin-top: 3px; line-height: 1.45; }
-.bookmark .actions { display: flex; margin-top: 7px; gap: 4px; flex-wrap: wrap; }
-.bookmark .actions button { font-size: 11px; padding: 2px 8px; box-shadow: none; }
-@media (hover: hover) {
-  .bookmark .actions { display: none; }
-  .bookmark:hover .actions { display: flex; }
-}
 
 /* ---------------- Watch list ---------------- */
 
@@ -812,6 +830,8 @@ button.ghost-btn:hover { border-color: var(--border-strong); background: var(--s
   font-weight: 400;
   color: var(--text);
 }
+.modal-card label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.modal-card label.check input { width: auto; margin: 0; accent-color: var(--accent); }
 .modal-card textarea { resize: vertical; }
 .modal-card .row {
   display: grid;
@@ -1236,9 +1256,13 @@ button.ghost-btn:hover { border-color: var(--border-strong); background: var(--s
   .search-wrap { width: 100%; }
   .search-wrap input[type="search"] { width: 100%; }
 
-  .kanban { grid-template-columns: 1fr; }
-  .kanban-col { min-height: auto; }
+  .week-grid { grid-template-columns: 1fr; gap: 8px; }
+  .week-col { min-height: auto; }
+  /* Only show days that actually have work — a phone can't carry 8 columns */
+  .week-col.is-empty { display: none; }
   .cards:empty::after { padding: 12px 0; }
+  .week-label { min-width: 0; flex: 1; font-size: 12px; }
+  .section-head .section-tools { justify-content: space-between; }
 
   /* 16px+ inputs prevent iOS auto-zoom on focus */
   input, textarea, select { font-size: 16px; padding: 10px 12px; }
@@ -1246,7 +1270,6 @@ button.ghost-btn:hover { border-color: var(--border-strong); background: var(--s
   button { min-height: 40px; padding: 10px 14px; font-size: 14px; }
   .icon-btn { min-height: auto; }
   .card .actions button,
-  .bookmark .actions button,
   .linkedin-day .actions button { min-height: 32px; padding: 6px 10px; font-size: 12px; }
   .action-btn { font-size: 13px; padding: 8px 12px; min-height: 36px; }
 

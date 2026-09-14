@@ -3,7 +3,6 @@
 const POLL_MS = 4000;
 let state = { tasks: [], bookmarks: [], watchlist: [], shopping: [], linkedin_week: {}, people: [], inbox: [] };
 let lastSnapshot = "";
-let bookmarkFilter = "";
 let watchFilter = "";
 let watchShowWatched = false;
 let shoppingFilter = "";
@@ -14,6 +13,8 @@ let shoppingSort = "newest";
 let contactsFilter = "";
 let contactsSort = "name";
 let currentPerson = null;
+let weekOffset = 0;         // 0 = current week; ◀/▶ shift by one week
+let draggingTaskId = null;  // set while a task card is mid-drag — suppresses re-render
 
 // ---------------- Fetch helpers ----------------
 
@@ -59,7 +60,6 @@ async function poll() {
 
 function render() {
   renderTasks();
-  renderBookmarks();
   renderWatch();
   renderShopping();
   renderLinkedIn();
@@ -74,6 +74,8 @@ let activePage = (location.hash || "").slice(1)
   || localStorage.getItem("chorgi.activePage") || "tasks";
 
 function setActivePage(name) {
+  // A remembered or linked page may no longer exist (e.g. the removed Bookmarks tab).
+  if (!document.querySelector(`.page[data-page="${name}"]`)) name = "tasks";
   activePage = name;
   localStorage.setItem("chorgi.activePage", name);
   if (("#" + name) !== location.hash) history.replaceState(null, "", "#" + name);
@@ -85,7 +87,6 @@ function setActivePage(name) {
   });
   // Contextual primary action in the top bar
   document.getElementById("add-task-btn").classList.toggle("hidden", name !== "tasks");
-  document.getElementById("add-bookmark-btn").classList.toggle("hidden", name !== "bookmarks");
   document.getElementById("add-watch-btn").classList.toggle("hidden", name !== "watch");
   document.getElementById("add-shopping-btn").classList.toggle("hidden", name !== "shopping");
   document.getElementById("add-contact-btn").classList.toggle("hidden", name !== "contacts");
@@ -94,8 +95,14 @@ function setActivePage(name) {
 }
 
 function renderTabBadges() {
-  const pending = (state.tasks || []).filter(t => t.status === "pending").length;
-  const bookmarks = (state.bookmarks || []).length;
+  // Open work needing attention: undated, or dated today or earlier.
+  // Deliberately independent of weekOffset so browsing weeks doesn't churn it.
+  const todayKey = localDateKey(new Date());
+  const pending = (state.tasks || []).filter(t => {
+    if (t.status === "done") return false;
+    const k = taskDateKey(t);
+    return k === null || k <= todayKey;
+  }).length;
   const watch = (state.watchlist || []).filter(w => !w.watched).length;
   const shopping = (state.shopping || []).filter(s => !s.bought).length;
   const inbox = (state.inbox || []).length;
@@ -108,7 +115,6 @@ function renderTabBadges() {
     el.classList.toggle("zero", !n);
   };
   set("tab-badge-tasks", pending);
-  set("tab-badge-bookmarks", bookmarks);
   set("tab-badge-watch", watch);
   set("tab-badge-shopping", shopping);
   set("tab-badge-inbox", inbox);
@@ -138,21 +144,164 @@ function emptyState(title, hint) {
   );
 }
 
-// ---- Tasks ----
+// ---- Tasks (week calendar) ----
+//
+// Mon–Sun columns for one week. There is no Pending column: every open task sits
+// on a day. The heartbeat (task_cli.roll_over_tasks) carries unfinished work from
+// past weeks onto the current Monday and gives undated tasks today's date.
+//
+// Week/day math runs in the
+// browser's local timezone, assumed to match the bot's LOCAL_TZ (Europe/Berlin,
+// skills/_shared.py) — the same assumption the task modal's datetime-local
+// round-trip already makes.
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// YYYY-MM-DD from a Date's *local* parts. Never toISOString() — that's UTC.
+function localDateKey(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function addDays(d, n) {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+// Monday 00:00 local, `offset` weeks from the current week.
+function startOfWeek(offset) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  const dow = (d.getDay() + 6) % 7;  // Mon=0 … Sun=6
+  return addDays(d, -dow + offset * 7);
+}
+
+// Which column a task belongs in, as a YYYY-MM-DD key (null → undated).
+function taskDateKey(t) {
+  // scheduled_at is stored Berlin-local *with* offset ("2026-07-26T11:00:00+02:00"),
+  // so the date is literal — parsing it through Date would reintroduce tz drift.
+  if (t.scheduled_at) return t.scheduled_at.slice(0, 10);
+  if (t.deadline) return t.deadline;
+  // completed_at is UTC, so this one genuinely needs converting to a local date.
+  // Keeps a task finished today visible even if it never had a date.
+  if (t.status === "done" && t.completed_at) {
+    const d = new Date(t.completed_at);
+    if (!isNaN(d)) return localDateKey(d);
+  }
+  return null;
+}
+
+function fmtTimeOfDay(t) {
+  return t.scheduled_at ? t.scheduled_at.slice(11, 16) : "";
+}
+
+// Format a YYYY-MM-DD key without letting Date parse it as UTC midnight.
+function fmtDateKeyShort(key) {
+  const [y, m, d] = (key || "").split("-").map(Number);
+  if (!y || !m || !d) return key || "";
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function fmtWeekRange(a, b) {
+  const opts = { month: "short", day: "numeric" };
+  const left = a.toLocaleDateString(undefined, opts);
+  const right = b.toLocaleDateString(undefined, opts);
+  if (a.getFullYear() !== b.getFullYear()) {
+    return `${left}, ${a.getFullYear()} – ${right}, ${b.getFullYear()}`;
+  }
+  return `${left} – ${right}, ${b.getFullYear()}`;
+}
+
+const prioRank = (t) => ({ high: 0, medium: 1, low: 2 }[t.priority] ?? 1);
+
+// Manual position within a column, set by dragging. A card that has never been
+// dragged has no sort_order and ranks last, so new work lands at the bottom of a
+// hand-arranged column instead of shoving itself into the middle of it.
+const orderRank = (t) => (typeof t.sort_order === "number" ? t.sort_order : Infinity);
+
+// Every column sorts the same way:
+//   1. done last — completed work is always pinned to the bottom
+//   2. your manual arrangement
+//   3. the automatic fallback, for cards you've never dragged
+// Steps 1 and 2 are shared; each column supplies its own step 3.
+function byPinnedThenManual(fallback) {
+  return (a, b) => {
+    const ad = a.t.status === "done" ? 1 : 0, bd = b.t.status === "done" ? 1 : 0;
+    if (ad !== bd) return ad - bd;
+    const ao = orderRank(a.t), bo = orderRank(b.t);
+    if (ao !== bo) return ao - bo;   // both Infinity (never dragged) → fall through
+    return fallback(a, b);
+  };
+}
+
+// Day fallback: priority band, then time of day inside it (an untimed card —
+// deadline- or completion-placed — sorts after timed ones).
+const sortDay = (entries) => entries.sort(byPinnedThenManual((a, b) => {
+  const p = prioRank(a.t) - prioRank(b.t);
+  if (p) return p;
+  const at = fmtTimeOfDay(a.t), bt = fmtTimeOfDay(b.t);
+  if (!!at !== !!bt) return at ? -1 : 1;
+  return at.localeCompare(bt);
+}));
 
 function renderTasks() {
-  const groups = { pending: [], scheduled: [], done: [] };
-  for (const t of state.tasks) {
-    (groups[t.status] || groups.pending).push(t);
+  const grid = document.getElementById("week-grid");
+  if (!grid) return;
+  // Don't yank a card out from under an in-flight drag on the 4s poll tick.
+  if (draggingTaskId) return;
+
+  const monday = startOfWeek(weekOffset);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const dayKeys = days.map(localDateKey);
+  const todayKey = localDateKey(new Date());
+  const isCurrentWeek = weekOffset === 0;
+
+  document.getElementById("week-label").textContent = fmtWeekRange(monday, days[6]);
+  document.getElementById("week-today").classList.toggle("hidden", isCurrentWeek);
+
+  const byDay = {};
+  for (const k of dayKeys) byDay[k] = [];
+
+  for (const t of (state.tasks || [])) {
+    // An open undated task (just created, heartbeat hasn't dated it yet) shows on today.
+    const key = taskDateKey(t) ?? (t.status !== "done" ? todayKey : null);
+    if (key && byDay[key]) byDay[key].push({ t });
+    // Anything else belongs to another week.
   }
-  for (const status of Object.keys(groups)) {
-    const col = document.getElementById("col-" + status);
-    col.innerHTML = "";
-    document.getElementById("count-" + status).textContent = groups[status].length;
-    for (const t of groups[status]) {
-      col.appendChild(taskCard(t));
-    }
+
+  grid.innerHTML = "";
+  for (let i = 0; i < 7; i++) {
+    const key = dayKeys[i];
+    grid.appendChild(weekCol({
+      key,
+      title: WEEKDAYS[i],
+      dayNum: days[i].getDate(),
+      entries: sortDay(byDay[key]),
+      isToday: key === todayKey,
+      isWeekend: i >= 5,
+    }));
   }
+}
+
+function weekCol(o) {
+  const cls = ["week-col"];
+  if (o.isToday) cls.push("is-today");
+  if (o.isWeekend) cls.push("is-weekend");
+  if (!o.entries.length) cls.push("is-empty");  // hidden on narrow screens
+  const col = el("div", { class: cls.join(" "), dataset: { date: o.key } });
+
+  const title = el("span", { class: "col-title" }, o.title);
+  if (o.dayNum != null) title.appendChild(el("span", { class: "week-day-num" }, String(o.dayNum)));
+  const count = el("span", { class: "count" + (o.entries.length ? "" : " zero") },
+    String(o.entries.length));
+  col.appendChild(el("h3", {}, title, count));
+
+  const cards = el("div", { class: "cards" });
+  for (const e of o.entries) cards.appendChild(taskCard(e.t));
+  col.appendChild(cards);
+  wireDayDrop(cards, o.key);
+  return col;
 }
 
 function taskCard(t) {
@@ -162,9 +311,17 @@ function taskCard(t) {
     dataset: { taskId: t.id },
     ondragstart: (e) => {
       e.dataTransfer.setData("text/plain", t.id);
+      e.dataTransfer.effectAllowed = "move";
+      draggingTaskId = t.id;
       card.classList.add("dragging");
     },
-    ondragend: () => card.classList.remove("dragging"),
+    ondragend: () => {
+      // Also runs when a drag is abandoned outside any column, so this is where
+      // the drag chrome gets cleaned up rather than in the drop handler alone.
+      draggingTaskId = null;
+      card.classList.remove("dragging");
+      endDragChrome();
+    },
     onclick: (e) => {
       // Don't open modal if clicking an action button
       if (e.target.closest("button")) return;
@@ -173,7 +330,13 @@ function taskCard(t) {
   });
   card.appendChild(el("div", { class: "title" }, t.title));
   const meta = el("div", { class: "meta" });
-  if (t.deadline) meta.appendChild(el("span", {}, "📅 " + t.deadline));
+  const time = fmtTimeOfDay(t);
+  if (time) meta.appendChild(el("span", { class: "card-time" }, time));
+  if (t.deadline) {
+    const overdue = t.status !== "done" && t.deadline < localDateKey(new Date());
+    meta.appendChild(el("span", { class: overdue ? "overdue" : "" },
+      "⚑ " + fmtDateKeyShort(t.deadline)));
+  }
   if (t.estimated_minutes) meta.appendChild(el("span", {}, t.estimated_minutes + "m"));
   if (t.carry_count > 0) meta.appendChild(el("span", {}, "↩ " + t.carry_count));
   for (const tag of (t.tags || [])) {
@@ -195,84 +358,131 @@ function taskCard(t) {
   return card;
 }
 
-// Drag-drop wiring (set up once)
-function setupKanbanDrops() {
-  document.querySelectorAll(".kanban-col").forEach((col) => {
-    const target = col.querySelector(".cards");
-    target.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      target.classList.add("drag-over");
-    });
-    target.addEventListener("dragleave", () => target.classList.remove("drag-over"));
-    target.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      target.classList.remove("drag-over");
-      const taskId = e.dataTransfer.getData("text/plain");
-      const newStatus = col.dataset.status;
-      try {
-        await api("PATCH", "/api/tasks/" + taskId, { status: newStatus });
-        poll();
-      } catch (err) {
-        toast("Move failed: " + err.message, "error");
-      }
-    });
-  });
+// ---- Dragging: place a card on a day, and position it within that day ----
+//
+// A drop does two things at once — which column the card lands in, and where in
+// that column it sits. Both go in one PATCH so a move can't half-apply.
+//
+// Every drop sends the destination column's full top-to-bottom id list; the
+// server hands out fresh sort_order indexes from it, so a column's ordering is
+// always rewritten whole and can't drift.
+//
+// Done cards are pinned to the bottom of every column, so the insertion point is
+// clamped: an open card can't be dropped below them, nor a done card above them.
+
+// The insertion line. Absolutely positioned, so hovering never reflows the cards
+// underneath it — a flex-child indicator makes the midpoints it's measured
+// against jump, and the drop target oscillates.
+let dropIndicator = null;
+
+function endDragChrome() {
+  if (dropIndicator) dropIndicator.remove();
+  document.querySelectorAll(".cards.drag-over")
+    .forEach((c) => c.classList.remove("drag-over"));
 }
 
-// ---- Bookmarks ----
-
-function renderBookmarks() {
-  const container = document.getElementById("bookmark-groups");
-  container.innerHTML = "";
-  const q = bookmarkFilter.toLowerCase();
-  const filtered = q
-    ? state.bookmarks.filter((b) => {
-        const hay = [b.url, b.title, b.notes, ...(b.tags || [])].join(" ").toLowerCase();
-        return hay.includes(q);
-      })
-    : state.bookmarks;
-
-  const groups = {};
-  for (const b of filtered) {
-    const tag = (b.tags && b.tags[0]) || "untagged";
-    (groups[tag] = groups[tag] || []).push(b);
-  }
-  const sortedGroups = Object.keys(groups).sort((a, b) => {
-    if (a === "untagged") return 1;
-    if (b === "untagged") return -1;
-    return a.localeCompare(b);
-  });
-  for (const tag of sortedGroups) {
-    const group = el("div", { class: "bookmark-group" });
-    group.appendChild(el("h4", {}, tag + " · " + groups[tag].length));
-    for (const b of groups[tag]) group.appendChild(bookmarkCard(b));
-    container.appendChild(group);
-  }
+// Cards already in this column, top to bottom. The card being dragged is excluded
+// — it's what we're inserting, not something to insert against.
+function columnCards(container) {
+  return Array.from(container.querySelectorAll(".card:not(.dragging)"));
 }
 
-function bookmarkCard(b) {
-  const card = el("div", { class: "bookmark" });
-  const title = b.title || b.url;
-  card.appendChild(el("a", { href: b.url, target: "_blank", rel: "noopener" }, title));
-  if (b.notes) card.appendChild(el("div", { class: "notes" }, b.notes));
+// Index the card would be inserted at, from the cursor's position.
+function dropIndexAt(container, clientY, isDone) {
+  const cards = columnCards(container);
+  let index = cards.length;
+  for (let i = 0; i < cards.length; i++) {
+    const r = cards[i].getBoundingClientRect();
+    if (clientY < r.top + r.height / 2) { index = i; break; }
+  }
+  // Keep the done block at the bottom intact, so the indicator never promises a
+  // slot the re-render would immediately take back.
+  const firstDone = cards.findIndex((c) => c.classList.contains("status-done"));
+  if (firstDone < 0) return index;
+  return isDone ? Math.max(index, firstDone) : Math.min(index, firstDone);
+}
 
-  const actions = el("div", { class: "actions" });
-  actions.appendChild(el("button", {
-    onclick: () => triggerSubagent("general", `Fetch ${b.url} and write a 1-2 sentence summary. Then update the bookmark notes via the bookmarks skill.`, "Summarizing…")
-  }, "Summarize"));
-  actions.appendChild(el("button", {
-    onclick: () => triggerSubagent("general", `Look at this bookmark and suggest 2-3 short tags for it. URL: ${b.url}, current title: ${b.title}, current notes: ${b.notes}. Update the bookmark via bookmarks skill.`, "Re-tagging…")
-  }, "Re-tag"));
-  actions.appendChild(el("button", {
-    class: "danger",
-    onclick: async () => {
-      if (!confirm("Delete bookmark?")) return;
-      await api("DELETE", "/api/bookmarks", { url: b.url });
-      poll();
+function showDropIndicator(container, index) {
+  if (!dropIndicator) dropIndicator = el("div", { class: "drop-indicator" });
+  const cards = columnCards(container);
+  const box = container.getBoundingClientRect();
+  let top = 0;
+  if (cards.length) {
+    const edge = index >= cards.length
+      ? cards[cards.length - 1].getBoundingClientRect().bottom + 3
+      : cards[index].getBoundingClientRect().top - 5;
+    top = edge - box.top;
+  }
+  dropIndicator.style.top = `${top}px`;
+  if (dropIndicator.parentElement !== container) container.appendChild(dropIndicator);
+}
+
+// Dropping on a day plans it for that day. The PATCH sends sync_calendar:false —
+// dragging never writes to Google Calendar. Any linked event stays put; the task
+// editor's "Add to calendar" toggle is the only calendar control.
+// Wired per column as the grid is rebuilt.
+function wireDayDrop(target, dayKey) {
+  const draggedTask = () => (state.tasks || []).find((t) => t.id === draggingTaskId);
+
+  target.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    target.classList.add("drag-over");
+    showDropIndicator(target, dropIndexAt(target, e.clientY, draggedTask()?.status === "done"));
+  });
+  target.addEventListener("dragleave", (e) => {
+    // Crossing onto a card inside this column still fires dragleave on the column.
+    if (e.relatedTarget && target.contains(e.relatedTarget)) return;
+    target.classList.remove("drag-over");
+    if (dropIndicator) dropIndicator.remove();
+  });
+  target.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData("text/plain");
+    const task = (state.tasks || []).find((t) => t.id === taskId);
+
+    // Read the drop position before tearing down the drag: both the index and the
+    // id list depend on .dragging still marking the card being moved.
+    const index = task ? dropIndexAt(target, e.clientY, task.status === "done") : 0;
+    const ids = columnCards(target).map((c) => c.dataset.taskId);
+    endDragChrome();
+    draggingTaskId = null;  // dragend hasn't fired yet; unblock the re-render below
+    if (!task) return;
+    ids.splice(index, 0, taskId);
+
+    const cur = taskDateKey(task);
+    const body = { sync_calendar: false, order: ids };
+    if (cur !== dayKey) {
+      body.scheduled_at = `${dayKey} ${fmtTimeOfDay(task) || "09:00"}`;
     }
-  }, "Delete"));
-  card.appendChild(actions);
-  return card;
+    const staleEvent = (task.calendar_event_id && task.scheduled_at)
+      ? fmtDateKeyShort(task.scheduled_at.slice(0, 10)) : null;
+
+    // Show the new arrangement now instead of waiting out a poll cycle. The
+    // server's version replaces this wholesale on the next tick.
+    ids.forEach((id, i) => {
+      const t = (state.tasks || []).find((x) => x.id === id);
+      if (t) t.sort_order = i;
+    });
+    if (body.scheduled_at) {
+      // Offsetless, but nothing reads it as an instant — taskDateKey() and
+      // fmtTimeOfDay() slice the date and time straight out of the string.
+      task.scheduled_at = body.scheduled_at.replace(" ", "T") + ":00";
+    }
+    renderTasks();
+
+    try {
+      await api("PATCH", "/api/tasks/" + taskId, body);
+      poll();
+      // Be explicit rather than let the calendar silently disagree with the board.
+      if (staleEvent) {
+        toast(`Moved on the board — calendar event still ${staleEvent} (save it in the editor to move the event)`);
+      }
+    } catch (err) {
+      toast("Move failed: " + err.message, "error");
+      poll();  // the optimistic move didn't stick — resync to what's stored
+    }
+  });
 }
 
 // ---- Watch list ----
@@ -506,22 +716,13 @@ function openTaskModal(t) {
   document.getElementById("task-estimate").value = t?.estimated_minutes || "";
   document.getElementById("task-deadline").value = t?.deadline || "";
   document.getElementById("task-scheduled-at").value = t?.scheduled_at ? t.scheduled_at.slice(0, 16) : "";
+  document.getElementById("task-calendar").checked = !!t?.calendar_event_id;
   document.getElementById("task-tags").value = (t?.tags || []).join(", ");
   document.getElementById("task-delete").classList.toggle("hidden", !t);
   document.getElementById("task-modal").classList.remove("hidden");
 }
 
 function closeTaskModal() { document.getElementById("task-modal").classList.add("hidden"); }
-
-function openBookmarkModal() {
-  document.getElementById("bookmark-url").value = "";
-  document.getElementById("bookmark-title").value = "";
-  document.getElementById("bookmark-tags").value = "";
-  document.getElementById("bookmark-notes").value = "";
-  document.getElementById("bookmark-modal").classList.remove("hidden");
-}
-
-function closeBookmarkModal() { document.getElementById("bookmark-modal").classList.add("hidden"); }
 
 function openWatchModal() {
   document.getElementById("watch-url").value = "";
@@ -566,17 +767,20 @@ function toast(msg, kind) {
 // ---------------- Wire up ----------------
 
 document.addEventListener("DOMContentLoaded", () => {
-  setupKanbanDrops();
+  const shiftWeek = (n) => { weekOffset += n; renderTasks(); };
+  document.getElementById("week-prev").addEventListener("click", () => shiftWeek(-1));
+  document.getElementById("week-next").addEventListener("click", () => shiftWeek(1));
+  document.getElementById("week-today").addEventListener("click", () => {
+    weekOffset = 0;
+    renderTasks();
+  });
 
   document.getElementById("add-task-btn").addEventListener("click", () => openTaskModal(null));
-  document.getElementById("add-bookmark-btn").addEventListener("click", openBookmarkModal);
   document.getElementById("add-watch-btn").addEventListener("click", openWatchModal);
   document.getElementById("add-shopping-btn").addEventListener("click", openShoppingModal);
 
   document.getElementById("task-cancel").addEventListener("click", closeTaskModal);
   document.getElementById("task-modal-x").addEventListener("click", closeTaskModal);
-  document.getElementById("bookmark-cancel").addEventListener("click", closeBookmarkModal);
-  document.getElementById("bookmark-modal-x").addEventListener("click", closeBookmarkModal);
   document.getElementById("watch-cancel").addEventListener("click", closeWatchModal);
   document.getElementById("watch-modal-x").addEventListener("click", closeWatchModal);
   document.getElementById("shopping-cancel").addEventListener("click", closeShoppingModal);
@@ -589,9 +793,21 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // "Scheduled" means "on the calendar", so the status follows the toggle.
+  document.getElementById("task-calendar").addEventListener("change", (e) => {
+    const status = document.getElementById("task-status");
+    if (status.value !== "done") status.value = e.target.checked ? "scheduled" : "pending";
+  });
+
   document.getElementById("task-save").addEventListener("click", async () => {
     const id = document.getElementById("task-id").value;
+    const calendar = document.getElementById("task-calendar").checked;
+    if (calendar && !document.getElementById("task-scheduled-at").value) {
+      toast("Pick a time under When to add it to your calendar", "error");
+      return;
+    }
     const payload = {
+      calendar,
       title: document.getElementById("task-title").value,
       notes: document.getElementById("task-notes").value,
       priority: document.getElementById("task-priority").value,
@@ -605,10 +821,14 @@ document.addEventListener("DOMContentLoaded", () => {
       tags: document.getElementById("task-tags").value,
     };
     try {
-      if (id) await api("PATCH", "/api/tasks/" + id, payload);
-      else await api("POST", "/api/tasks", payload);
+      const saved = id
+        ? await api("PATCH", "/api/tasks/" + id, payload)
+        : await api("POST", "/api/tasks", payload);
       closeTaskModal();
       poll();
+      if (saved?._calendar_warning) {
+        toast("Saved, but the calendar wasn't updated: " + saved._calendar_warning, "error");
+      }
     } catch (e) { toast("Save failed: " + e.message, "error"); }
   });
 
@@ -620,25 +840,6 @@ document.addEventListener("DOMContentLoaded", () => {
       closeTaskModal();
       poll();
     } catch (e) { toast("Delete failed: " + e.message, "error"); }
-  });
-
-  document.getElementById("bookmark-save").addEventListener("click", async () => {
-    const payload = {
-      url: document.getElementById("bookmark-url").value,
-      title: document.getElementById("bookmark-title").value,
-      tags: document.getElementById("bookmark-tags").value,
-      notes: document.getElementById("bookmark-notes").value,
-    };
-    try {
-      await api("POST", "/api/bookmarks", payload);
-      closeBookmarkModal();
-      poll();
-    } catch (e) { toast("Save failed: " + e.message, "error"); }
-  });
-
-  document.getElementById("bookmark-search").addEventListener("input", (e) => {
-    bookmarkFilter = e.target.value;
-    renderBookmarks();
   });
 
   document.getElementById("watch-save").addEventListener("click", async () => {
@@ -704,9 +905,14 @@ document.addEventListener("DOMContentLoaded", () => {
     renderShopping();
   });
 
-  // Esc closes modals
+  // Esc closes modals; ←/→ walk the task week
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { closeTaskModal(); closeBookmarkModal(); closeWatchModal(); closeShoppingModal(); closePersonModal(); closePersonEditModal(); }
+    if (e.key === "Escape") { closeTaskModal(); closeWatchModal(); closeShoppingModal(); closePersonModal(); closePersonEditModal(); }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    if (activePage !== "tasks") return;
+    if (document.querySelector(".modal:not(.hidden)")) return;
+    if (e.target?.closest?.("input, textarea, select")) return;
+    shiftWeek(e.key === "ArrowLeft" ? -1 : 1);
   });
 
   const cs = document.getElementById("contacts-search");

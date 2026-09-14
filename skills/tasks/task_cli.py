@@ -33,6 +33,54 @@ def save_tasks(tasks: list[dict]) -> None:
     _shared.save_json(DATA_FILE, tasks)
 
 
+def roll_over_tasks(tasks: list[dict], now: datetime | None = None) -> int:
+    """Keep every open task on a day of the current week or later.
+
+    The board has no Pending column, so:
+      - an open task dated before this week's Monday moves to that Monday
+        (carry_count += 1), keeping its time of day (09:00 if it had none);
+      - an open task with no date at all is given today.
+    Like a board drag, this only replans the task record — a linked calendar
+    event is left where it is. Dates compare in LOCAL_TZ. Idempotent; mutates
+    `tasks` in place and returns how many changed.
+    """
+    today = (now or _shared.now_local()).date()
+    monday = today - timedelta(days=today.weekday())
+    changed = 0
+    for task in tasks:
+        if task.get("status") == "done":
+            continue
+        scheduled = task.get("scheduled_at") or ""
+        key = scheduled[:10] or task.get("deadline") or None
+        if key is None:
+            target, carried = today, False
+        elif key < monday.isoformat():
+            target, carried = monday, True
+        else:
+            continue
+        try:
+            task["scheduled_at"] = normalize_scheduled_at(
+                f"{target.isoformat()} {scheduled[11:16] or '09:00'}")
+        except ValueError:
+            continue
+        # Its manual position belonged to the old column; land at the bottom.
+        task.pop("sort_order", None)
+        if carried:
+            task["carry_count"] = (task.get("carry_count") or 0) + 1
+        changed += 1
+    return changed
+
+
+def roll_over() -> int:
+    """Locked load → roll_over_tasks → save. Run by the scheduler heartbeat."""
+    with _shared.file_lock(DATA_FILE):
+        tasks = load_tasks()
+        changed = roll_over_tasks(tasks)
+        if changed:
+            save_tasks(tasks)
+    return changed
+
+
 def make_id() -> str:
     now = int(datetime.now(timezone.utc).timestamp())
     suffix = hashlib.md5(str(now).encode() + str(len(load_tasks())).encode()).hexdigest()[:3]
@@ -70,7 +118,7 @@ def cmd_add(args):
         result = create_calendar_event_for_task(task, scheduled_at)
         if result.get("ok"):
             task["status"] = "scheduled"
-            task["scheduled_at"] = result["scheduled_at"]
+            task["scheduled_at"] = task["calendar_at"] = result["scheduled_at"]
             task["calendar_event_id"] = result["event_id"]
         else:
             # Keep the task pending but remember the time the user asked for, so
@@ -98,6 +146,15 @@ def _parse_scheduled_at(value: str) -> datetime:
     fmt = "%Y-%m-%d %H:%M:%S" if s.count(":") == 2 else "%Y-%m-%d %H:%M"
     dt = datetime.strptime(s, fmt)
     return dt.replace(tzinfo=_shared.LOCAL_TZ)
+
+
+def normalize_scheduled_at(value: str) -> str:
+    """'YYYY-MM-DD HH:MM' → the local-ISO string used for stored scheduled_at.
+
+    For setting a task's time *without* creating a calendar event, so the
+    stored format matches what create/update_calendar_event_for_task write.
+    """
+    return _parse_scheduled_at(value).isoformat()
 
 
 def _run_calendar_cli(args: list[str]) -> dict:
@@ -286,7 +343,7 @@ def cmd_update(args):
         else:
             result = create_calendar_event_for_task(task, scheduled_at)
         if result["ok"]:
-            task["scheduled_at"] = result["scheduled_at"]
+            task["scheduled_at"] = task["calendar_at"] = result["scheduled_at"]
             task["status"] = "scheduled"
             if "event_id" in result:
                 task["calendar_event_id"] = result["event_id"]

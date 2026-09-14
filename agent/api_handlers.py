@@ -365,6 +365,7 @@ def _create_task(body: dict) -> dict:
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     scheduled_at = (body.get("scheduled_at") or "").strip() or None
+    warning = None
     with _data_lock, _shared.file_lock(tc.DATA_FILE):
         tasks = tc.load_tasks()
         task = {
@@ -380,63 +381,128 @@ def _create_task(body: dict) -> dict:
             "carry_count": 0,
         }
         if scheduled_at:
-            result = tc.create_calendar_event_for_task(task, scheduled_at)
-            if result.get("ok"):
-                task["status"] = "scheduled"
-                task["scheduled_at"] = result["scheduled_at"]
-                task["calendar_event_id"] = result["event_id"]
-            else:
-                # Keep pending but remember the requested time (mirrors task_cli).
-                task["requested_at"] = scheduled_at
-                task["_calendar_warning"] = result.get("error", "calendar create failed")
+            warning = _apply_schedule(tc, task, {"scheduled_at": scheduled_at,
+                                                 "calendar": bool(body.get("calendar"))})
         tasks.insert(0, task)
         tc.save_tasks(tasks)
-    return task
+    # The warning is for this response only — never persisted on the task.
+    return {**task, "_calendar_warning": warning} if warning else task
 
 
 _TASK_FIELDS = {"title", "notes", "priority", "estimated_minutes",
                 "deadline", "tags", "status", "carry_count",
                 "scheduled_at", "calendar_event_id"}
+# sort_order is deliberately absent: it is only ever assigned from an `order`
+# list, so a column's indexes stay contiguous and can't be set to a stray value.
+
+
+def _column_key(task: dict) -> str | None:
+    """Which board column a task sits in — mirrors taskDateKey() in app.js."""
+    scheduled = task.get("scheduled_at")
+    if scheduled:
+        return scheduled[:10]
+    return task.get("deadline") or None
+
+
+def _apply_order(tasks: list[dict], order: list) -> None:
+    """Assign sort_order 0..n-1 to the listed task ids — the board's manual arrangement.
+
+    `order` is one column's full top-to-bottom id list as the browser rendered it,
+    so every card in that column gets a fresh index on every drop and stale values
+    never accumulate. Exact id match only (no prefix matching): these ids come from
+    the DOM, and a prefix hit would silently reorder the wrong task. Unknown ids are
+    skipped — a card can be deleted from another tab mid-drag.
+    """
+    by_id = {t["id"]: t for t in tasks}
+    for i, tid in enumerate(order):
+        task = by_id.get(tid)
+        if task is not None:
+            task["sort_order"] = i
+
+
+def _apply_schedule(tc, task: dict, body: dict, sync_calendar: bool = True) -> str | None:
+    """Set a task's date/time from body["scheduled_at"] and reconcile its calendar event.
+
+    Only an explicit `calendar: true` (the task editor's "Add to calendar" toggle)
+    ever creates an event; `calendar: false` deletes one. Without the key, a
+    linked event follows the task's time and an unlinked task stays unlinked —
+    setting a time alone never puts anything on the calendar.
+
+    sync_calendar=False (the week-board drag) changes the task record only:
+    dragging is planning, not calendaring, so a linked event stays where it is.
+    `calendar_at` remembers the time the event was actually booked for, so a
+    later save with the toggle on moves an event a drag left behind.
+
+    Returns a warning string if a calendar call failed, else None.
+    """
+    current = task.get("scheduled_at")
+    new = current
+    if "scheduled_at" in body:
+        raw = (body.get("scheduled_at") or "").strip()
+        if not raw:
+            new = None
+        else:
+            try:
+                new = tc.normalize_scheduled_at(raw)
+            except ValueError:
+                logger.warning("ignoring malformed scheduled_at %r for task %s",
+                               raw, task.get("id"))
+
+    if not sync_calendar:
+        if new:
+            task["scheduled_at"] = new
+        else:
+            task.pop("scheduled_at", None)
+            if task.get("status") == "scheduled":
+                task["status"] = "pending"
+            # calendar_event_id is deliberately kept: it still points at a real event.
+        return None
+
+    event_id = task.get("calendar_event_id")
+    want_event = bool(body["calendar"]) if "calendar" in body else bool(event_id)
+    warning = None
+    if want_event and new:
+        if not event_id:
+            result = tc.create_calendar_event_for_task(task, new[:16])
+            if result.get("ok"):
+                task["calendar_event_id"] = result["event_id"]
+                task["calendar_at"] = new = result["scheduled_at"]
+            else:
+                warning = result.get("error") or "calendar event not created"
+        elif new != task.get("calendar_at", current):
+            result = tc.update_calendar_event_for_task(task, new[:16])
+            if result.get("ok"):
+                task["calendar_at"] = new = result["scheduled_at"]
+            else:
+                warning = result.get("error") or "calendar event not moved"
+    elif event_id:
+        tc.delete_calendar_event_for_task(task)
+        task.pop("calendar_event_id", None)
+        task.pop("calendar_at", None)
+
+    if new:
+        task["scheduled_at"] = new
+    else:
+        task.pop("scheduled_at", None)
+    # "scheduled" means "on the calendar"; the toggle is the source of truth.
+    if task.get("status") != "done":
+        task["status"] = "scheduled" if task.get("calendar_event_id") else "pending"
+    return warning
 
 
 def _update_task(task_id: str, body: dict) -> dict | None:
     tc = _get_task_cli()
+    sync_calendar = body.get("sync_calendar", True)
+    warning = None
     with _data_lock, _shared.file_lock(tc.DATA_FILE):
         tasks = tc.load_tasks()
         task = tc.find_task(tasks, task_id)
         if task is None:
             return None
+        old_column = _column_key(task)
 
-        new_scheduled = body.get("scheduled_at") if "scheduled_at" in body else "__unset__"
-        if new_scheduled != "__unset__":
-            new_scheduled = (new_scheduled or "").strip() or None
-            old_scheduled = task.get("scheduled_at")
-            old_event_id = task.get("calendar_event_id")
-            if new_scheduled and new_scheduled != old_scheduled:
-                if old_event_id:
-                    # Apply pending edits (title/notes/estimate) before updating the event
-                    for k, v in body.items():
-                        if k in _TASK_FIELDS and k not in ("scheduled_at", "calendar_event_id", "status"):
-                            if k == "tags" and isinstance(v, str):
-                                v = [t.strip() for t in v.split(",") if t.strip()]
-                            task[k] = v
-                    result = tc.update_calendar_event_for_task(task, new_scheduled)
-                    if result.get("ok"):
-                        task["scheduled_at"] = result["scheduled_at"]
-                        task["status"] = "scheduled"
-                else:
-                    result = tc.create_calendar_event_for_task(task, new_scheduled)
-                    if result.get("ok"):
-                        task["scheduled_at"] = result["scheduled_at"]
-                        task["calendar_event_id"] = result["event_id"]
-                        task["status"] = "scheduled"
-            elif not new_scheduled and old_event_id:
-                tc.delete_calendar_event_for_task(task)
-                task.pop("calendar_event_id", None)
-                task.pop("scheduled_at", None)
-                if task.get("status") == "scheduled":
-                    task["status"] = "pending"
-
+        # Plain fields first, so an event created or moved below carries the
+        # new title/notes/estimate.
         for k, v in body.items():
             if k in _TASK_FIELDS and k not in ("scheduled_at", "calendar_event_id"):
                 if k == "tags" and isinstance(v, str):
@@ -444,8 +510,24 @@ def _update_task(task_id: str, body: dict) -> dict | None:
                 task[k] = v
         if body.get("status") == "done" and "completed_at" not in task:
             task["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+        if "scheduled_at" in body or "calendar" in body:
+            warning = _apply_schedule(tc, task, body, sync_calendar)
+
+        order = body.get("order")
+        if isinstance(order, list):
+            # Applied last so it wins over anything above: a drag that also
+            # changes the day is one write, and the card lands where it was
+            # dropped rather than at whatever its old index implied.
+            _apply_order(tasks, order)
+        elif _column_key(task) != old_column:
+            # Landed in a different column by some other route (the modal's
+            # "When", a sub-agent rescheduling it). Its index belonged to the
+            # old column, so drop it and let the card fall to the bottom of
+            # the new one instead of wedging into an arbitrary slot.
+            task.pop("sort_order", None)
         tc.save_tasks(tasks)
-    return task
+    return {**task, "_calendar_warning": warning} if warning else task
 
 
 def _delete_task(task_id: str) -> bool:

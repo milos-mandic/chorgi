@@ -29,10 +29,6 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           New task
         </button>
-        <button id="add-bookmark-btn" class="primary action-btn hidden">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          Add bookmark
-        </button>
         <button id="add-watch-btn" class="primary action-btn hidden">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           Add to watch
@@ -53,11 +49,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span class="tab-label">Tasks</span>
         <span class="tab-badge" id="tab-badge-tasks">0</span>
-      </button>
-      <button class="tab" data-page="bookmarks">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-        <span class="tab-label">Bookmarks</span>
-        <span class="tab-badge" id="tab-badge-bookmarks">0</span>
       </button>
       <button class="tab" data-page="watch">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
@@ -82,39 +73,25 @@
   </header>
 
   <main class="board">
-    <!-- Tasks kanban -->
+    <!-- Tasks week calendar -->
     <section class="board-section page" id="tasks-section" data-page="tasks">
       <div class="section-head">
         <h2>Tasks</h2>
-      </div>
-      <div class="kanban">
-        <div class="kanban-col" data-status="pending">
-          <h3><span class="col-title">Pending</span> <span class="count" id="count-pending">0</span></h3>
-          <div class="cards" id="col-pending"></div>
-        </div>
-        <div class="kanban-col" data-status="scheduled">
-          <h3><span class="col-title">Scheduled</span> <span class="count" id="count-scheduled">0</span></h3>
-          <div class="cards" id="col-scheduled"></div>
-        </div>
-        <div class="kanban-col" data-status="done">
-          <h3><span class="col-title">Done</span> <span class="count" id="count-done">0</span></h3>
-          <div class="cards" id="col-done"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Bookmarks -->
-    <section class="board-section page" id="bookmarks-section" data-page="bookmarks">
-      <div class="section-head">
-        <h2>Bookmarks</h2>
         <div class="section-tools">
-          <div class="search-wrap">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-            <input type="search" id="bookmark-search" placeholder="Search bookmarks…">
+          <div class="week-nav">
+            <button class="icon-btn" id="week-prev" aria-label="Previous week">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span class="week-label" id="week-label"></span>
+            <button class="icon-btn" id="week-next" aria-label="Next week">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button id="week-today" class="hidden">Today</button>
           </div>
         </div>
       </div>
-      <div class="bookmark-groups" id="bookmark-groups"></div>
+      <!-- Mon–Sun columns are built by renderTasks() -->
+      <div class="week-grid" id="week-grid"></div>
     </section>
 
     <!-- Watch list -->
@@ -340,6 +317,7 @@
         <label>When <input type="datetime-local" id="task-scheduled-at"></label>
         <label>Deadline <input type="date" id="task-deadline"></label>
       </div>
+      <label class="check"><input type="checkbox" id="task-calendar"> Add to calendar</label>
       <label>Tags <input type="text" id="task-tags" placeholder="comma, separated"></label>
       <div class="modal-actions">
         <button id="task-delete" class="danger-ghost hidden">Delete</button>
@@ -350,26 +328,6 @@
     </div>
   </div>
 
-  <!-- Bookmark modal -->
-  <div class="modal hidden" id="bookmark-modal">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h3>Add bookmark</h3>
-        <button class="icon-btn modal-x" id="bookmark-modal-x" aria-label="Close">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <label>URL <input type="url" id="bookmark-url" autocomplete="off" placeholder="https://…"></label>
-      <label>Title <input type="text" id="bookmark-title" placeholder="Optional — fetched if blank"></label>
-      <label>Tags <input type="text" id="bookmark-tags" placeholder="comma, separated"></label>
-      <label>Notes <textarea id="bookmark-notes" rows="2" placeholder="Why is this worth keeping?"></textarea></label>
-      <div class="modal-actions">
-        <span class="modal-actions-spacer"></span>
-        <button id="bookmark-cancel">Cancel</button>
-        <button id="bookmark-save" class="primary">Save bookmark</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Watch modal -->
   <div class="modal hidden" id="watch-modal">
