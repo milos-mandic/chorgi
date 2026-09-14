@@ -1,7 +1,7 @@
 // Chorgi dashboard — vanilla JS, polls /api/state every 4s.
 
 const POLL_MS = 4000;
-let state = { tasks: [], bookmarks: [], watchlist: [], shopping: [], linkedin_week: {}, people: [], inbox: [] };
+let state = { tasks: [], bookmarks: [], watchlist: [], shopping: [], social_posts: [], people: [], inbox: [] };
 let lastSnapshot = "";
 let watchFilter = "";
 let watchShowWatched = false;
@@ -15,6 +15,10 @@ let contactsSort = "name";
 let currentPerson = null;
 let weekOffset = 0;         // 0 = current week; ◀/▶ shift by one week
 let draggingTaskId = null;  // set while a task card is mid-drag — suppresses re-render
+let socialWeekOffset = 0;     // Social board's week, independent of the task board's
+let draggingSocialId = null;  // set while a social card is mid-drag
+let socialImage = null;       // image in the open post editor: { url, name } or null
+let socialImageDirty = false; // the editor's image was added, replaced or removed
 
 // ---------------- Fetch helpers ----------------
 
@@ -24,10 +28,16 @@ async function api(method, path, body) {
   const r = await fetch(path, opts);
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
-    throw new Error(`${method} ${path} → ${r.status}: ${txt}`);
+    const err = new Error(`${method} ${path} → ${r.status}: ${txt}`);
+    err.status = r.status;
+    try { err.payload = JSON.parse(txt); } catch {}
+    throw err;
   }
   return r.json();
 }
+
+// The server's own error message when there is one, else the raw failure.
+const errText = (e) => e.payload?.error || e.message;
 
 // ---------------- Poll loop ----------------
 
@@ -35,7 +45,7 @@ let pollCount = 0;
 async function poll() {
   try {
     const data = await api("GET", "/api/state");
-    const snap = JSON.stringify([data.tasks.length, data.bookmarks.length, data.linkedin_week?.week_of]);
+    const snap = JSON.stringify([data.tasks.length, data.bookmarks.length, (data.social_posts || []).length]);
     state = data;
     // Always re-render on first load; otherwise only on shape changes
     // (full diff would be nicer, but cheap re-render is fine at this scale)
@@ -62,7 +72,7 @@ function render() {
   renderTasks();
   renderWatch();
   renderShopping();
-  renderLinkedIn();
+  renderSocial();
   renderInbox();
   renderContacts();
   renderTabBadges();
@@ -90,6 +100,8 @@ function setActivePage(name) {
   document.getElementById("add-watch-btn").classList.toggle("hidden", name !== "watch");
   document.getElementById("add-shopping-btn").classList.toggle("hidden", name !== "shopping");
   document.getElementById("add-contact-btn").classList.toggle("hidden", name !== "contacts");
+  document.getElementById("add-social-btn").classList.toggle("hidden", name !== "social");
+  document.getElementById("import-social-btn").classList.toggle("hidden", name !== "social");
   if (name === "wiki" && !wikiLoaded) loadWikiTopics();
   if (name === "chat" && !chatLoaded) initChat();
 }
@@ -108,6 +120,12 @@ function renderTabBadges() {
   const inbox = (state.inbox || []).length;
   const contacts = (state.people || []).length;
   const wiki = wikiTopics.length;
+  // Social: posts from this Monday through today that still aren't posted.
+  const mondayKey = localDateKey(startOfWeek(0));
+  const social = (state.social_posts || []).filter((p) => {
+    const k = p.scheduled_at.slice(0, 10);
+    return p.status !== "posted" && k >= mondayKey && k <= todayKey;
+  }).length;
   const set = (id, n) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -115,6 +133,7 @@ function renderTabBadges() {
     el.classList.toggle("zero", !n);
   };
   set("tab-badge-tasks", pending);
+  set("tab-badge-social", social);
   set("tab-badge-watch", watch);
   set("tab-badge-shopping", shopping);
   set("tab-badge-inbox", inbox);
@@ -668,38 +687,455 @@ function shoppingRow(s) {
   return row;
 }
 
-// ---- LinkedIn ----
+// ---- Social (LinkedIn posts + Substack Notes) ----
+//
+// Mon–Sun columns × one row per platform; a cell holds at most one post (the
+// server enforces it). Dragging a card to another cell moves it there and keeps
+// its time of day; dropping onto an occupied cell swaps the two posts. Post text
+// is shown, sent and copied exactly as stored — never trimmed or reformatted.
 
-function renderLinkedIn() {
-  const container = document.getElementById("linkedin-days");
-  container.innerHTML = "";
-  const cal = state.linkedin_week || {};
-  document.getElementById("linkedin-week-of").textContent =
-    cal.week_of ? "(week of " + cal.week_of + ")" : "";
-  const days = cal.days || [];
-  if (!days.length) {
-    container.appendChild(emptyState("No content calendar yet",
-      "Ask the bot to plan your LinkedIn week and it will show up here."));
+const SOCIAL_PLATFORMS = [
+  { key: "linkedin", label: "LinkedIn", single: "LinkedIn post", short: "in", limit: 3000 },
+  { key: "substack_note", label: "Substack Notes", single: "Substack Note", short: "S", limit: 10000 },
+];
+const SOCIAL_STATUS_LABELS = { draft: "Draft", ready: "Ready", posted: "Posted" };
+const SOCIAL_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const SOCIAL_IMAGE_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
+
+const socialPlatform = (key) => SOCIAL_PLATFORMS.find((p) => p.key === key)
+  || { key, label: key, single: key, short: "?", limit: 10000 };
+const socialImageUrl = (file) => "/social-images/" + encodeURIComponent(file);
+// Code points, not UTF-16 units: matches the server's len() and the schema's
+// maxLength, so 𝗯𝗼𝗹𝗱 letters and emoji don't count double.
+const charCount = (s) => [...s].length;
+
+function platformIcon(key) {
+  return el("span", { class: `platform-icon platform-${key}`, "aria-hidden": "true" }, socialPlatform(key).short);
+}
+
+function renderSocial() {
+  const grid = document.getElementById("social-grid");
+  if (!grid) return;
+  if (draggingSocialId) return;  // don't rebuild under an in-flight drag
+
+  const monday = startOfWeek(socialWeekOffset);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const dayKeys = days.map(localDateKey);
+  const todayKey = localDateKey(new Date());
+  document.getElementById("social-week-label").textContent = fmtWeekRange(monday, days[6]);
+  document.getElementById("social-week-today").classList.toggle("hidden", socialWeekOffset === 0);
+
+  const bySlot = new Map();
+  for (const p of (state.social_posts || [])) {
+    bySlot.set(`${p.platform}|${p.scheduled_at.slice(0, 10)}`, p);
+  }
+
+  grid.innerHTML = "";
+  grid.appendChild(el("div", { class: "social-corner" }));
+  // Phones collapse the grid to one column; --m-order then regroups it as
+  // day header → one cell per platform, day by day.
+  const stride = SOCIAL_PLATFORMS.length + 1;
+  days.forEach((d, i) => {
+    grid.appendChild(el("div", {
+      class: "social-day-head" + (dayKeys[i] === todayKey ? " is-today" : ""),
+      style: `--m-order: ${i * stride}`,
+    },
+      el("span", { class: "col-title" }, WEEKDAYS[i]),
+      el("span", { class: "week-day-num" }, String(d.getDate())),
+    ));
+  });
+  SOCIAL_PLATFORMS.forEach((plat, row) => {
+    grid.appendChild(el("div", { class: "social-row-head" }, platformIcon(plat.key), el("span", {}, plat.label)));
+    dayKeys.forEach((key, i) => {
+      const cls = ["social-cell"];
+      if (key === todayKey) cls.push("is-today");
+      if (i >= 5) cls.push("is-weekend");
+      const cell = el("div", {
+        class: cls.join(" "),
+        style: `--m-order: ${i * stride + row + 1}`,
+        dataset: { platform: plat.key, date: key, platformLabel: plat.label },
+      });
+      const post = bySlot.get(`${plat.key}|${key}`);
+      const dayName = `${WEEKDAYS[i]} ${days[i].getDate()}`;
+      cell.appendChild(post ? socialCard(post) : el("button", {
+        class: "social-add",
+        title: `New ${plat.single} for ${dayName}`,
+        "aria-label": `New ${plat.single} for ${dayName}`,
+        onclick: () => openSocialModal(null, { platform: plat.key, date: key }),
+      }, "+"));
+      wireSocialDrop(cell);
+      grid.appendChild(cell);
+    });
+  });
+}
+
+function socialCard(p) {
+  const card = el("div", {
+    class: `card social-card status-${p.status}`,
+    draggable: "true",
+    dataset: { postId: p.id },
+    ondragstart: (e) => {
+      e.dataTransfer.setData("text/plain", p.id);
+      e.dataTransfer.effectAllowed = "move";
+      draggingSocialId = p.id;
+      card.classList.add("dragging");
+    },
+    ondragend: () => {
+      draggingSocialId = null;
+      card.classList.remove("dragging");
+      document.querySelectorAll(".social-cell.drag-over").forEach((c) => c.classList.remove("drag-over"));
+    },
+    onclick: (e) => {
+      if (e.target.closest("button")) return;
+      openSocialModal(p);
+    },
+  });
+  card.appendChild(el("div", { class: "meta" },
+    el("span", { class: "card-time" }, fmtTimeOfDay(p)),
+    el("span", { class: `social-status status-${p.status}` }, SOCIAL_STATUS_LABELS[p.status] || p.status),
+  ));
+  if (p.image) {
+    card.appendChild(el("img", {
+      class: "social-thumb", src: socialImageUrl(p.image.file), alt: p.image.alt || "",
+      loading: "lazy", draggable: "false",
+    }));
+  }
+  card.appendChild(el("div", { class: "social-snippet" }, p.text));
+  const actions = el("div", { class: "actions" });
+  actions.appendChild(el("button", {
+    onclick: async () => {
+      const ok = await copyToClipboard(p.text);
+      if (ok) toast(`Copied the ${socialPlatform(p.platform).single} text`);
+      else toast("Copy failed. Open the post and copy from the editor", "error");
+    },
+  }, "Copy text"));
+  card.appendChild(actions);
+  return card;
+}
+
+// Dropping on a cell moves the post there (same time of day). An occupied cell
+// swaps: the post already there goes to where the dragged one came from.
+function wireSocialDrop(cell) {
+  cell.addEventListener("dragover", (e) => {
+    if (!draggingSocialId) return;  // only social cards, not task cards or files
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    cell.classList.add("drag-over");
+  });
+  cell.addEventListener("dragleave", (e) => {
+    if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+    cell.classList.remove("drag-over");
+  });
+  cell.addEventListener("drop", async (e) => {
+    if (!draggingSocialId) return;
+    e.preventDefault();
+    const id = draggingSocialId;
+    draggingSocialId = null;  // dragend hasn't fired yet; unblock the re-render below
+    cell.classList.remove("drag-over");
+
+    const posts = state.social_posts || [];
+    const post = posts.find((p) => p.id === id);
+    if (!post) return;
+    const { platform, date } = cell.dataset;
+    const fromPlatform = post.platform;
+    const fromDate = post.scheduled_at.slice(0, 10);
+    if (platform === fromPlatform && date === fromDate) return;
+    const other = posts.find((p) => p.id !== id && p.platform === platform
+      && p.scheduled_at.slice(0, 10) === date);
+
+    // Show the move now. Only the date part of scheduled_at is swapped in —
+    // nothing reads it as an instant, and the server recomputes the offset.
+    post.platform = platform;
+    post.scheduled_at = date + post.scheduled_at.slice(10);
+    if (other) {
+      other.platform = fromPlatform;
+      other.scheduled_at = fromDate + other.scheduled_at.slice(10);
+    }
+    renderSocial();
+
+    try {
+      await api("POST", "/api/social/move", { id, platform, date });
+      if (other) toast("Swapped with the post that was already there");
+    } catch (err) {
+      toast("Move failed: " + errText(err), "error");
+    }
+    poll();  // resync to what's stored either way
+  });
+}
+
+async function copyToClipboard(text) {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch { /* fall through to the legacy path */ }
+  }
+  // Fallback (e.g. plain-HTTP LAN access): a hidden textarea keeps newlines and
+  // Unicode exactly as-is.
+  const ta = el("textarea", { readonly: "", "aria-hidden": "true", style: "position:fixed;top:0;left:-9999px;opacity:0" });
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+async function copyImageToClipboard(src) {
+  if (!window.ClipboardItem || !navigator.clipboard?.write) {
+    throw new Error("this browser can't copy images. Use Download instead");
+  }
+  // The item takes a promise, not a blob: Safari only allows a clipboard write
+  // that starts synchronously inside the click, and fetching/converting is async.
+  const png = (async () => {
+    const blob = await (await fetch(src)).blob();
+    if (blob.type === "image/png") return blob;
+    // Clipboards only reliably accept PNG, so re-encode JPEG/WebP/GIF.
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    return new Promise((resolve, reject) => canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("image conversion failed"))), "image/png"));
+  })();
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+}
+
+function openSocialModal(p, preset) {
+  const plat = socialPlatform(p?.platform || preset?.platform || "linkedin");
+  const defaultDate = preset?.date
+    || localDateKey(socialWeekOffset === 0 ? new Date() : startOfWeek(socialWeekOffset));
+  document.getElementById("social-modal-title").textContent = p ? `Edit ${plat.single}` : "New post";
+  document.getElementById("social-id").value = p?.id || "";
+  document.getElementById("social-platform").value = plat.key;
+  document.getElementById("social-scheduled-at").value = p ? p.scheduled_at.slice(0, 16) : `${defaultDate}T09:00`;
+  document.getElementById("social-status").value = p?.status || "draft";
+  document.getElementById("social-text").value = p?.text || "";
+  document.getElementById("social-notes").value = p?.notes || "";
+  document.getElementById("social-image-alt").value = p?.image?.alt || "";
+  socialImage = p?.image ? { url: socialImageUrl(p.image.file), name: p.image.file } : null;
+  socialImageDirty = false;
+  renderSocialImage();
+  updateSocialCount();
+  document.getElementById("social-delete").classList.toggle("hidden", !p);
+  document.getElementById("social-mark-posted").classList.toggle("hidden", !p || p.status === "posted");
+  document.getElementById("social-modal").classList.remove("hidden");
+  document.getElementById("social-text").focus();
+}
+
+function closeSocialModal() { document.getElementById("social-modal").classList.add("hidden"); }
+
+function updateSocialCount() {
+  const plat = socialPlatform(document.getElementById("social-platform").value);
+  const n = charCount(document.getElementById("social-text").value);
+  const out = document.getElementById("social-count");
+  out.textContent = `${n.toLocaleString()} / ${plat.limit.toLocaleString()}`;
+  out.classList.toggle("over", n > plat.limit);
+}
+
+function renderSocialImage() {
+  const has = !!socialImage;
+  const preview = document.getElementById("social-image-preview");
+  preview.classList.toggle("hidden", !has);
+  if (has) preview.src = socialImage.url;
+  else preview.removeAttribute("src");
+  document.getElementById("social-dropzone-empty").classList.toggle("hidden", has);
+  document.getElementById("social-image-actions").classList.toggle("hidden", !has);
+  const download = document.getElementById("social-download-image");
+  if (has) {
+    download.href = socialImage.url;
+    download.setAttribute("download", socialImage.name);
+  }
+}
+
+async function setSocialImageFromFile(file) {
+  if (!file) return;
+  const ext = SOCIAL_IMAGE_EXT[file.type];
+  if (!ext) { toast("Images must be PNG, JPEG, WebP or GIF", "error"); return; }
+  if (file.size > SOCIAL_MAX_IMAGE_BYTES) { toast("Images can be at most 8 MB", "error"); return; }
+  try {
+    const dataUri = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    socialImage = { url: dataUri, name: `post-image.${ext}` };
+    socialImageDirty = true;
+    renderSocialImage();
+  } catch (e) {
+    toast("Couldn't read the image: " + e.message, "error");
+  }
+}
+
+async function saveSocialPost() {
+  const idInput = document.getElementById("social-id");
+  const when = document.getElementById("social-scheduled-at").value;
+  const text = document.getElementById("social-text").value;
+  if (!when) { toast("Pick a date and time", "error"); return; }
+  if (!text.trim()) { toast("The post has no text", "error"); return; }
+  const alt = document.getElementById("social-image-alt").value;
+  const payload = {
+    platform: document.getElementById("social-platform").value,
+    scheduled_at: when.replace("T", " "),
+    status: document.getElementById("social-status").value,
+    text,  // exactly as typed, never trimmed
+    notes: document.getElementById("social-notes").value,
+  };
+  try {
+    let saved = idInput.value
+      ? await api("PATCH", "/api/social/posts/" + idInput.value, { ...payload, image_alt: alt })
+      : await api("POST", "/api/social/posts", payload);
+    // Keep the id right away: if the image upload below fails, saving again
+    // updates this post instead of hitting its own slot as a conflict.
+    idInput.value = saved.id;
+    if (socialImageDirty) {
+      saved = socialImage
+        ? await api("POST", `/api/social/posts/${saved.id}/image`, { data_uri: socialImage.url, alt })
+        : await api("DELETE", `/api/social/posts/${saved.id}/image`);
+      socialImageDirty = false;
+    }
+    closeSocialModal();
+  } catch (e) {
+    toast("Save failed: " + errText(e), "error");
+  }
+  poll();
+}
+
+// ---- Social import ----
+
+let socialImportFileText = null;  // a chosen file's contents, kept out of the textarea (images make it huge)
+let socialImportDoc = null;       // the document the current preview was built from
+let socialImportTimer = null;
+let socialImportSeq = 0;          // drops preview responses that a newer edit superseded
+let socialSchemaText = null;
+
+function openSocialImportModal() {
+  socialImportFileText = null;
+  socialImportDoc = null;
+  document.getElementById("social-import-json").value = "";
+  document.getElementById("social-import-filename").textContent = "";
+  document.getElementById("social-import-overwrite").checked = false;
+  document.getElementById("social-import-preview").innerHTML = "";
+  document.getElementById("social-import-apply").disabled = true;
+  document.getElementById("social-import-modal").classList.remove("hidden");
+  // Fetched ahead of time so "Copy schema" can write to the clipboard straight
+  // from the click; some browsers refuse clipboard writes after an await.
+  if (!socialSchemaText) {
+    api("GET", "/api/social/schema")
+      .then((s) => { socialSchemaText = JSON.stringify(s, null, 2); })
+      .catch(() => {});
+  }
+}
+
+function closeSocialImportModal() { document.getElementById("social-import-modal").classList.add("hidden"); }
+
+async function previewSocialImport() {
+  const out = document.getElementById("social-import-preview");
+  const apply = document.getElementById("social-import-apply");
+  const raw = (socialImportFileText ?? document.getElementById("social-import-json").value).trim();
+  const seq = ++socialImportSeq;
+  apply.disabled = true;
+  socialImportDoc = null;
+  if (!raw) { out.innerHTML = ""; return; }
+  let doc;
+  try {
+    doc = JSON.parse(raw);
+  } catch (e) {
+    out.replaceChildren(el("div", { class: "social-import-problem" }, "Not valid JSON: " + e.message));
     return;
   }
-  for (const d of days) {
-    const card = el("div", { class: "linkedin-day" });
-    card.appendChild(el("div", { class: "day-header" },
-      el("span", {}, `${d.weekday} ${d.date}`),
-      el("span", { class: "badge" }, d.status || "?"),
-    ));
-    if (d.topic) card.appendChild(el("div", { class: "topic" }, d.topic));
-    if (d.angle) card.appendChild(el("div", { class: "angle" }, d.angle));
+  const overwrite = document.getElementById("social-import-overwrite").checked;
+  try {
+    const res = await api("POST", "/api/social/import", { mode: "preview", doc, overwrite });
+    if (seq !== socialImportSeq) return;
+    renderSocialImportPreview(res, overwrite);
+    socialImportDoc = doc;
+    apply.disabled = !res.ok;
+  } catch (e) {
+    if (seq !== socialImportSeq) return;
+    out.replaceChildren(el("div", { class: "social-import-problem" }, "Preview failed: " + errText(e)));
+  }
+}
 
-    const actions = el("div", { class: "actions" });
-    actions.appendChild(el("button", {
-      onclick: () => triggerSubagent("linkedin", `Write a LinkedIn post for ${d.date} (${d.weekday}). Topic: ${d.topic}. Angle: ${d.angle}. Format: ${d.format}. Pillar: ${d.pillar}.`, "Drafting post…")
-    }, "Draft"));
-    actions.appendChild(el("button", {
-      onclick: () => triggerSubagent("linkedin", `Polish the existing draft for ${d.date}. Make it punchier and tighter.`, "Polishing…")
-    }, "Polish"));
-    card.appendChild(actions);
-    container.appendChild(card);
+function weekdayOf(dateKey) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return WEEKDAYS[(new Date(y, m - 1, d).getDay() + 6) % 7];
+}
+
+// How many weeks from the current one to the week containing dateKey.
+function weekOffsetFor(dateKey) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const day = new Date(y, m - 1, d);
+  const monday = addDays(day, -((day.getDay() + 6) % 7));
+  return Math.round((monday - startOfWeek(0)) / (7 * 24 * 3600 * 1000));  // round: DST weeks
+}
+
+function renderSocialImportPreview(res, overwrite) {
+  const c = res.counts;
+  const parts = [];
+  if (c.new) parts.push(`${c.new} new`);
+  if (c.replace) parts.push(`${c.replace} replacing existing`);
+  if (c.conflict) parts.push(`${c.conflict} conflicting`);
+  if (c.error) parts.push(`${c.error} with errors`);
+  const nodes = [el("div", { class: "social-import-summary" + (res.ok ? " ok" : "") },
+    (res.ok ? "✓ Ready to import: " : "") + (parts.join(" · ") || "no posts"))];
+  if (c.conflict && !overwrite) {
+    nodes.push(el("div", { class: "modal-hint" },
+      "Some of these days already have a post on that platform. Tick “Overwrite existing posts” to replace them."));
+  }
+  if (res.errors.length) {
+    nodes.push(el("ul", { class: "social-import-errors" },
+      ...res.errors.map((e) => el("li", {}, `${e.path}: ${e.message}`))));
+  }
+  if (res.rows.length) {
+    const labels = { new: "New", replace: "Replace", conflict: "Conflict", error: "Error" };
+    const tbody = el("tbody");
+    for (const r of res.rows) {
+      const postCell = el("td", {}, el("div", { class: "social-import-snippet" }, r.snippet || "—"));
+      if (r.errors.length) {
+        postCell.appendChild(el("ul", { class: "social-import-errors" }, ...r.errors.map((m) => el("li", {}, m))));
+      }
+      if (r.warnings.length) {
+        postCell.appendChild(el("ul", { class: "social-import-warnings" }, ...r.warnings.map((m) => el("li", {}, m))));
+      }
+      tbody.appendChild(el("tr", {},
+        el("td", { class: "nowrap" }, r.date ? `${weekdayOf(r.date)} ${fmtDateKeyShort(r.date)}` : (r.scheduled_at || "—")),
+        el("td", { class: "nowrap" }, r.time || ""),
+        el("td", { class: "nowrap" }, r.platform ? socialPlatform(r.platform).single : "—"),
+        postCell,
+        el("td", {}, el("span", { class: `import-badge import-${r.action}` }, labels[r.action])),
+      ));
+    }
+    nodes.push(el("div", { class: "table-scroll" }, el("table", { class: "social-import-table" },
+      el("thead", {}, el("tr", {},
+        el("th", {}, "Day"), el("th", {}, "Time"), el("th", {}, "Platform"), el("th", {}, "Post"), el("th", {}, ""))),
+      tbody)));
+  }
+  document.getElementById("social-import-preview").replaceChildren(...nodes);
+}
+
+async function applySocialImport() {
+  if (!socialImportDoc) return;
+  const apply = document.getElementById("social-import-apply");
+  apply.disabled = true;
+  try {
+    const res = await api("POST", "/api/social/import", {
+      mode: "apply",
+      doc: socialImportDoc,
+      overwrite: document.getElementById("social-import-overwrite").checked,
+    });
+    closeSocialImportModal();
+    socialWeekOffset = weekOffsetFor(res.first_date);
+    setActivePage("social");
+    toast(`Imported ${res.imported} post${res.imported === 1 ? "" : "s"}`
+      + (res.replaced ? ` (${res.replaced} replaced)` : ""));
+    poll();
+  } catch (e) {
+    toast("Import failed: " + errText(e), "error");
+    previewSocialImport();  // show what changed, e.g. a slot taken meanwhile
   }
 }
 
@@ -774,6 +1210,14 @@ document.addEventListener("DOMContentLoaded", () => {
     renderTasks();
   });
 
+  const shiftSocialWeek = (n) => { socialWeekOffset += n; renderSocial(); };
+  document.getElementById("social-week-prev").addEventListener("click", () => shiftSocialWeek(-1));
+  document.getElementById("social-week-next").addEventListener("click", () => shiftSocialWeek(1));
+  document.getElementById("social-week-today").addEventListener("click", () => {
+    socialWeekOffset = 0;
+    renderSocial();
+  });
+
   document.getElementById("add-task-btn").addEventListener("click", () => openTaskModal(null));
   document.getElementById("add-watch-btn").addEventListener("click", openWatchModal);
   document.getElementById("add-shopping-btn").addEventListener("click", openShoppingModal);
@@ -785,10 +1229,14 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("shopping-cancel").addEventListener("click", closeShoppingModal);
   document.getElementById("shopping-modal-x").addEventListener("click", closeShoppingModal);
 
-  // Click on the backdrop closes any modal
+  // Click on the backdrop closes any modal. Only a press that starts on the
+  // backdrop counts: selecting text in a field and releasing outside the card
+  // must not throw away the edits.
   document.querySelectorAll(".modal").forEach((m) => {
+    let pressedBackdrop = false;
+    m.addEventListener("mousedown", (e) => { pressedBackdrop = e.target === m; });
     m.addEventListener("click", (e) => {
-      if (e.target === m) m.classList.add("hidden");
+      if (e.target === m && pressedBackdrop) m.classList.add("hidden");
     });
   });
 
@@ -904,14 +1352,130 @@ document.addEventListener("DOMContentLoaded", () => {
     renderShopping();
   });
 
-  // Esc closes modals; ←/→ walk the task week
+  // Esc closes modals; ←/→ walk the task or social week
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { closeTaskModal(); closeWatchModal(); closeShoppingModal(); closePersonModal(); closePersonEditModal(); }
+    if (e.key === "Escape") {
+      closeTaskModal(); closeWatchModal(); closeShoppingModal(); closePersonModal(); closePersonEditModal();
+      closeSocialModal(); closeSocialImportModal();
+    }
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    if (activePage !== "tasks") return;
+    if (activePage !== "tasks" && activePage !== "social") return;
     if (document.querySelector(".modal:not(.hidden)")) return;
     if (e.target?.closest?.("input, textarea, select")) return;
-    shiftWeek(e.key === "ArrowLeft" ? -1 : 1);
+    const step = e.key === "ArrowLeft" ? -1 : 1;
+    if (activePage === "tasks") shiftWeek(step);
+    else shiftSocialWeek(step);
+  });
+
+  // ---- Social: post editor ----
+  document.getElementById("add-social-btn").addEventListener("click", () => openSocialModal(null));
+  document.getElementById("social-cancel").addEventListener("click", closeSocialModal);
+  document.getElementById("social-modal-x").addEventListener("click", closeSocialModal);
+  document.getElementById("social-save").addEventListener("click", saveSocialPost);
+  document.getElementById("social-text").addEventListener("input", updateSocialCount);
+  document.getElementById("social-platform").addEventListener("change", updateSocialCount);
+
+  document.getElementById("social-mark-posted").addEventListener("click", () => {
+    document.getElementById("social-status").value = "posted";
+    saveSocialPost();  // saves any edits along with the status
+  });
+
+  document.getElementById("social-delete").addEventListener("click", async () => {
+    const id = document.getElementById("social-id").value;
+    if (!id || !confirm("Delete this post?")) return;
+    try {
+      await api("DELETE", "/api/social/posts/" + id);
+      closeSocialModal();
+      poll();
+    } catch (e) { toast("Delete failed: " + errText(e), "error"); }
+  });
+
+  document.getElementById("social-copy-text").addEventListener("click", async () => {
+    const ok = await copyToClipboard(document.getElementById("social-text").value);
+    if (ok) toast("Copied. Paste it as-is");
+    else toast("Copy failed. Select the text and copy it manually", "error");
+  });
+
+  const socialImageFile = document.getElementById("social-image-file");
+  document.getElementById("social-image-pick").addEventListener("click", () => socialImageFile.click());
+  socialImageFile.addEventListener("change", () => {
+    const file = socialImageFile.files[0];
+    socialImageFile.value = "";
+    setSocialImageFromFile(file);
+  });
+  const dropzone = document.getElementById("social-dropzone");
+  dropzone.addEventListener("click", (e) => {
+    if (!socialImage && !e.target.closest("button")) socialImageFile.click();
+  });
+  dropzone.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    dropzone.classList.add("drag-over");
+  });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag-over"));
+  dropzone.addEventListener("drop", (e) => {
+    if (!e.dataTransfer.files.length) return;
+    e.preventDefault();
+    dropzone.classList.remove("drag-over");
+    setSocialImageFromFile(e.dataTransfer.files[0]);
+  });
+  // A file dropped anywhere else must not navigate the tab away from the editor.
+  window.addEventListener("dragover", (e) => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); });
+  window.addEventListener("drop", (e) => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); });
+  // Paste an image anywhere in the open editor.
+  document.addEventListener("paste", (e) => {
+    if (document.getElementById("social-modal").classList.contains("hidden")) return;
+    const file = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith("image/"));
+    if (!file) return;
+    // Rich text copied from a doc can carry a rendered image too; in a text
+    // field, the text wins.
+    if (e.target?.closest?.("textarea, input") && e.clipboardData.types.includes("text/plain")) return;
+    e.preventDefault();
+    setSocialImageFromFile(file);
+  });
+  document.getElementById("social-image-remove").addEventListener("click", () => {
+    socialImage = null;
+    socialImageDirty = true;
+    renderSocialImage();
+  });
+  document.getElementById("social-copy-image").addEventListener("click", async () => {
+    if (!socialImage) return;
+    try {
+      await copyImageToClipboard(socialImage.url);
+      toast("Image copied");
+    } catch (e) { toast("Couldn't copy the image: " + e.message, "error"); }
+  });
+
+  // ---- Social: import ----
+  document.getElementById("import-social-btn").addEventListener("click", openSocialImportModal);
+  document.getElementById("social-import-cancel").addEventListener("click", closeSocialImportModal);
+  document.getElementById("social-import-x").addEventListener("click", closeSocialImportModal);
+  const importFile = document.getElementById("social-import-file");
+  document.getElementById("social-import-pick").addEventListener("click", () => importFile.click());
+  importFile.addEventListener("change", async () => {
+    const file = importFile.files[0];
+    importFile.value = "";
+    if (!file) return;
+    socialImportFileText = await file.text();
+    document.getElementById("social-import-filename").textContent = file.name;
+    document.getElementById("social-import-json").value = "";
+    previewSocialImport();
+  });
+  document.getElementById("social-import-json").addEventListener("input", () => {
+    socialImportFileText = null;
+    document.getElementById("social-import-filename").textContent = "";
+    clearTimeout(socialImportTimer);
+    socialImportTimer = setTimeout(previewSocialImport, 350);
+  });
+  document.getElementById("social-import-overwrite").addEventListener("change", previewSocialImport);
+  document.getElementById("social-import-apply").addEventListener("click", applySocialImport);
+  document.getElementById("social-copy-schema").addEventListener("click", async () => {
+    try {
+      if (!socialSchemaText) socialSchemaText = JSON.stringify(await api("GET", "/api/social/schema"), null, 2);
+      const ok = await copyToClipboard(socialSchemaText);
+      if (ok) toast("Schema copied. Give it to Claude as the contract");
+      else toast("Copy failed", "error");
+    } catch (e) { toast("Couldn't load the schema: " + errText(e), "error"); }
   });
 
   const cs = document.getElementById("contacts-search");

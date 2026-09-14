@@ -18,6 +18,7 @@ Import pattern from a skill CLI (they run as plain scripts):
 import fcntl
 import json
 import os
+import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,6 +33,27 @@ LOCAL_TZ = ZoneInfo("Europe/Berlin")
 def now_local() -> datetime:
     """Current time as a timezone-aware datetime in LOCAL_TZ."""
     return datetime.now(LOCAL_TZ)
+
+
+_LOCAL_DT_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?$")
+
+
+def parse_local_datetime(value: str) -> datetime:
+    """Parse 'YYYY-MM-DD HH:MM[:SS]' (or with a 'T') into an aware LOCAL_TZ datetime.
+
+    A value without an offset is local wall-clock time. One with an offset (or
+    'Z') is converted into LOCAL_TZ. Anything else — a bare date, a malformed or
+    impossible time — raises ValueError. Shared by the tasks and social skills so
+    stored scheduled_at strings have one format.
+    """
+    s = (value or "").strip()
+    if not _LOCAL_DT_RE.match(s):
+        raise ValueError(f"expected 'YYYY-MM-DD HH:MM', got {value!r}")
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=LOCAL_TZ)
+    return dt.astimezone(LOCAL_TZ)
 
 
 def now_context_line() -> str:

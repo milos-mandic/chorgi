@@ -19,7 +19,16 @@ Routes:
     GET    /api/bookmarks                → list bookmarks
     POST   /api/bookmarks                → create bookmark
     DELETE /api/bookmarks                → remove (body: {url})
-    GET    /api/linkedin/calendar        → current week's calendar
+    GET    /social-images/<name>         → a social post's image
+    GET    /api/social/posts             → list social posts
+    GET    /api/social/schema            → the social import JSON Schema
+    POST   /api/social/posts             → create a post
+    PATCH  /api/social/posts/<id>        → update a post
+    DELETE /api/social/posts/<id>        → remove a post (+ its image)
+    POST   /api/social/posts/<id>/image  → attach image ({data_uri, alt}; 25MB body)
+    DELETE /api/social/posts/<id>/image  → remove image
+    POST   /api/social/move              → {id, platform, date} (swaps if occupied)
+    POST   /api/social/import            → {doc, mode: preview|apply, overwrite} (25MB body)
     GET    /api/wiki/topics              → list topics (no article body)
     GET    /api/wiki/topics/<id|slug>    → topic + hydrated source bookmarks
     POST   /api/wiki/recluster           → queue full recluster + resynthesis
@@ -49,6 +58,8 @@ from agent import api_handlers
 logger = logging.getLogger(__name__)
 
 MAX_BODY_SIZE = 1024 * 1024  # 1MB
+# Social import / image upload bodies carry base64 images (8MB each decoded).
+MAX_UPLOAD_BODY_SIZE = 25 * 1024 * 1024
 BASE_DIR = Path(__file__).parent.parent
 UI_DIR = Path(__file__).parent / "ui"
 
@@ -132,13 +143,13 @@ class WebhookServer:
                 self.end_headers()
                 self.wfile.write(data)
 
-            def _read_body(self) -> bytes:
-                length = _parse_content_length(self.headers.get("Content-Length"))
+            def _read_body(self, limit: int = MAX_BODY_SIZE) -> bytes:
+                length = _parse_content_length(self.headers.get("Content-Length"), limit)
                 return self.rfile.read(length) if length > 0 else b""
 
-            def _read_json(self):
+            def _read_json(self, limit: int = MAX_BODY_SIZE):
                 try:
-                    body = self._read_body()
+                    body = self._read_body(limit)
                     return json.loads(body) if body else {}
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     return None
@@ -182,6 +193,10 @@ class WebhookServer:
                 if path == "/chorgi_bot.png":
                     self._check_cf_access()
                     self._serve_static("chorgi_bot.png", "image/png")
+                    return
+                if path.startswith("/social-images/"):
+                    self._check_cf_access()
+                    self._serve_social_image(path[len("/social-images/"):])
                     return
 
                 # API routes
@@ -291,17 +306,29 @@ class WebhookServer:
 
             # ---- static -----------------------------------------------------
             def _serve_static(self, filename: str, content_type: str):
-                fp = UI_DIR / filename
-                if not fp.exists():
-                    self._send_text(404, f"Not found: {filename}")
+                # no-store (not no-cache): Cloudflare caches .js/.css by
+                # extension and may serve stale assets after a deploy.
+                self._send_file(UI_DIR / filename, content_type, "no-store")
+
+            def _serve_social_image(self, name: str):
+                sc = api_handlers._get_social_cli()
+                fp = sc.image_path(name)  # None unless the name is one of ours
+                if fp is None:
+                    self._send_text(404, "Not found")
+                    return
+                # Names embed a content hash, so a URL's bytes never change.
+                # private: never cached by Cloudflare (the dashboard is behind Access).
+                self._send_file(fp, sc.image_mime(name), "private, max-age=31536000, immutable")
+
+            def _send_file(self, fp: Path, content_type: str, cache_control: str):
+                if not fp.is_file():
+                    self._send_text(404, f"Not found: {fp.name}")
                     return
                 data = fp.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
-                # no-store (not no-cache): Cloudflare caches .js/.css by
-                # extension and may serve stale assets after a deploy.
-                self.send_header("Cache-Control", "no-store")
+                self.send_header("Cache-Control", cache_control)
                 self.end_headers()
                 self.wfile.write(data)
 
@@ -311,7 +338,14 @@ class WebhookServer:
                 self._send_json(status, payload)
 
             def _api_write(self, path: str, method: str):
-                body = self._read_json()
+                limit = _body_limit(path)
+                if _declared_length(self.headers.get("Content-Length")) > limit:
+                    # Refuse rather than silently read an empty body; the
+                    # unread bytes mean this connection can't be reused.
+                    self.close_connection = True
+                    self._send_json(413, {"error": f"request body too large (max {limit // (1024 * 1024)} MB)"})
+                    return
+                body = self._read_json(limit)
                 status, payload = api_handlers.api_write(path, method, body, server_self)
                 self._send_json(status, payload)
 
@@ -436,15 +470,28 @@ def _log_future_error(future):
         logger.error("Webhook skill trigger failed", exc_info=True)
 
 
-def _parse_content_length(value) -> int:
+def _parse_content_length(value, limit: int = MAX_BODY_SIZE) -> int:
     """Safe Content-Length parse: garbage or oversized headers read as 0."""
-    try:
-        length = int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-    if length < 0 or length > MAX_BODY_SIZE:
+    length = _declared_length(value)
+    if length < 0 or length > limit:
         return 0
     return length
+
+
+def _declared_length(value) -> int:
+    """The Content-Length header as an int; garbage reads as 0."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _body_limit(path: str) -> int:
+    """Max request body for an API write — larger only where images are uploaded."""
+    if path == "/api/social/import" or (
+            path.startswith("/api/social/posts/") and path.endswith("/image")):
+        return MAX_UPLOAD_BODY_SIZE
+    return MAX_BODY_SIZE
 
 
 def _parse_secret_path(path: str, secret: str) -> tuple[str, str] | None:

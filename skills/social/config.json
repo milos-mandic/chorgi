@@ -1,0 +1,7 @@
+{
+  "name": "social",
+  "description": "The Social posting board (dashboard Social tab): scheduled LinkedIn posts and Substack Notes, one per platform per day. Use to import a prepared week of posts from JSON, list what's scheduled, show a post's exact text, or mark a post as posted. NOT for LinkedIn strategy, content research or drafting from scratch — use linkedin for that.",
+  "tools": ["Bash", "Read", "Write"],
+  "max_turns": 10,
+  "timeout_seconds": 180
+}

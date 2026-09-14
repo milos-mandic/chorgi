@@ -288,6 +288,18 @@ async def post_init(application: Application):
 
     orchestrator.send_to_user = send_to_user
 
+    async def send_raw_to_user(message: str):
+        # No strip_markdown: social post text must arrive exactly as written.
+        for chunk in _smart_chunk(message):
+            await bot.send_message(chat_id=authorized_user_id, text=chunk)
+
+    async def send_photo_to_user(path, caption: str | None = None):
+        with open(path, "rb") as photo:
+            await bot.send_photo(chat_id=authorized_user_id, photo=photo, caption=caption)
+
+    orchestrator.send_raw_to_user = send_raw_to_user
+    orchestrator.send_photo_to_user = send_photo_to_user
+
     scheduler = Scheduler(orchestrator)
     orchestrator.scheduler = scheduler  # /health reads heartbeat metrics
     # Keep a strong reference — asyncio holds only weak refs to tasks, so an

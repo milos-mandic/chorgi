@@ -41,6 +41,14 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           Add contact
         </button>
+        <button id="import-social-btn" class="action-btn hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Import JSON
+        </button>
+        <button id="add-social-btn" class="primary action-btn hidden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          New post
+        </button>
       </div>
     </div>
 
@@ -49,6 +57,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span class="tab-label">Tasks</span>
         <span class="tab-badge" id="tab-badge-tasks">0</span>
+      </button>
+      <button class="tab" data-page="social">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        <span class="tab-label">Social</span>
+        <span class="tab-badge" id="tab-badge-social">0</span>
       </button>
       <button class="tab" data-page="watch">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
@@ -243,12 +256,27 @@
       </div>
     </div>
 
-    <!-- LinkedIn week -->
-    <section class="board-section page" id="linkedin-section" data-page="linkedin">
+    <!-- Social posts week board -->
+    <section class="board-section page" id="social-section" data-page="social">
       <div class="section-head">
-        <h2>LinkedIn <span class="muted" id="linkedin-week-of"></span></h2>
+        <h2>Social</h2>
+        <div class="section-tools">
+          <div class="week-nav">
+            <button class="icon-btn" id="social-week-prev" aria-label="Previous week">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span class="week-label" id="social-week-label"></span>
+            <button class="icon-btn" id="social-week-next" aria-label="Next week">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button id="social-week-today" class="hidden">Today</button>
+          </div>
+        </div>
       </div>
-      <div class="linkedin-week" id="linkedin-days"></div>
+      <!-- Day columns × platform rows are built by renderSocial() -->
+      <div class="social-scroll">
+        <div class="social-grid" id="social-grid"></div>
+      </div>
     </section>
 
     <!-- Wiki -->
@@ -397,6 +425,92 @@
         <span class="modal-actions-spacer"></span>
         <button id="shopping-cancel">Cancel</button>
         <button id="shopping-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Social post modal -->
+  <div class="modal hidden" id="social-modal">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3 id="social-modal-title">New post</h3>
+        <button class="icon-btn modal-x" id="social-modal-x" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <input type="hidden" id="social-id">
+      <div class="row">
+        <label>Platform
+          <select id="social-platform">
+            <option value="linkedin">LinkedIn</option>
+            <option value="substack_note">Substack Note</option>
+          </select>
+        </label>
+        <label>When <input type="datetime-local" id="social-scheduled-at"></label>
+        <label>Status
+          <select id="social-status">
+            <option value="draft">Draft</option>
+            <option value="ready">Ready</option>
+            <option value="posted">Posted</option>
+          </select>
+        </label>
+      </div>
+      <label>
+        <span class="social-text-head">Text <span id="social-count" class="social-count"></span></span>
+        <textarea id="social-text" class="social-textarea" rows="12" placeholder="Paste or write the post exactly as it should appear"></textarea>
+      </label>
+      <div class="social-image-field">
+        <div class="social-field-label">Image <span class="muted">— optional · PNG, JPEG, WebP or GIF up to 8 MB</span></div>
+        <div class="social-dropzone" id="social-dropzone" tabindex="0">
+          <img id="social-image-preview" class="hidden" alt="">
+          <div class="social-dropzone-empty" id="social-dropzone-empty">
+            Drop or paste an image, or <button type="button" id="social-image-pick" class="ghost-btn">choose a file</button>
+          </div>
+        </div>
+        <input type="file" id="social-image-file" class="hidden" accept="image/png,image/jpeg,image/webp,image/gif">
+        <div class="social-image-actions hidden" id="social-image-actions">
+          <input type="text" id="social-image-alt" autocomplete="off" placeholder="Alt text (optional)">
+          <button type="button" id="social-copy-image">Copy image</button>
+          <a id="social-download-image" class="button-link" href="#" download>Download</a>
+          <button type="button" id="social-image-remove" class="danger-ghost">Remove</button>
+        </div>
+      </div>
+      <label>Notes <textarea id="social-notes" rows="2" placeholder="Private notes — not part of the post"></textarea></label>
+      <div class="modal-actions">
+        <button id="social-delete" class="danger-ghost hidden">Delete</button>
+        <span class="modal-actions-spacer"></span>
+        <button id="social-copy-text">Copy text</button>
+        <button id="social-mark-posted" class="hidden">Mark posted</button>
+        <button id="social-cancel">Cancel</button>
+        <button id="social-save" class="primary">Save post</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Social import modal -->
+  <div class="modal hidden" id="social-import-modal">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3>Import posts</h3>
+        <button class="icon-btn modal-x" id="social-import-x" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <p class="modal-hint">Load a JSON file that follows the social posts v1 contract. You'll see a preview first; nothing is saved until you import.</p>
+      <div class="social-import-source">
+        <button id="social-import-pick">Choose file…</button>
+        <input type="file" id="social-import-file" class="hidden" accept="application/json,.json">
+        <span id="social-import-filename" class="muted"></span>
+        <span class="modal-actions-spacer"></span>
+        <button id="social-copy-schema" class="ghost-btn">Copy schema</button>
+      </div>
+      <label>…or paste JSON <textarea id="social-import-json" class="mono" rows="6" spellcheck="false" placeholder='{"version": 1, "posts": [ … ]}'></textarea></label>
+      <div id="social-import-preview"></div>
+      <div class="modal-actions">
+        <label class="check"><input type="checkbox" id="social-import-overwrite"> Overwrite existing posts</label>
+        <span class="modal-actions-spacer"></span>
+        <button id="social-import-cancel">Cancel</button>
+        <button id="social-import-apply" class="primary" disabled>Import</button>
       </div>
     </div>
   </div>

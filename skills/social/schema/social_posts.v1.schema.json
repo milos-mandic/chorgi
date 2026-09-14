@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:chorgi:social_posts:v1",
+  "title": "Chorgi social posts import (v1)",
+  "description": "A batch of LinkedIn posts and Substack Notes for the Chorgi dashboard's Social board. At most one post per platform per calendar day (Europe/Berlin) — within one file, and against posts already on the board (conflicts are previewed before anything is saved and can be overwritten). Post text is stored and copied back exactly as written: plain text only, no Markdown or HTML; separate paragraphs with a blank line (\\n\\n); Unicode bold/italic letters and emoji are fine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "posts"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Contract version. Always 1."
+    },
+    "posts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/post" }
+    }
+  },
+  "$defs": {
+    "post": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "scheduled_at", "text"],
+      "properties": {
+        "platform": {
+          "enum": ["linkedin", "substack_note"],
+          "description": "Board row: 'linkedin' for a LinkedIn post, 'substack_note' for a Substack Note."
+        },
+        "scheduled_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?(Z|[+-][0-9]{2}:[0-9]{2})?$",
+          "description": "When to post. Preferred form is 'YYYY-MM-DD HH:MM' in Europe/Berlin local time. A UTC offset or 'Z' is also accepted and converted to Berlin time; the Berlin date decides the day column.",
+          "examples": ["2026-09-21 09:00"]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000,
+          "description": "The complete post, exactly as it should be pasted. Plain text; must not be only whitespace. LinkedIn posts are limited to 3000 characters."
+        },
+        "status": {
+          "enum": ["draft", "ready", "posted"],
+          "default": "ready",
+          "description": "'draft' = still in progress, 'ready' = final copy (default), 'posted' = already published."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Private notes shown in the editor only — never part of the post."
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["data_uri"],
+          "description": "Optional image to publish with the post.",
+          "properties": {
+            "data_uri": {
+              "type": "string",
+              "pattern": "^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$",
+              "x-maxDecodedBytes": 8388608,
+              "description": "Base64 data URI of a PNG, JPEG, WebP or GIF image, at most 8 MB decoded. The declared type must match the actual image bytes."
+            },
+            "alt": {
+              "type": "string",
+              "maxLength": 1000,
+              "description": "Optional alt text."
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "platform": { "const": "linkedin" } },
+            "required": ["platform"]
+          },
+          "then": {
+            "properties": { "text": { "maxLength": 3000 } }
+          }
+        }
+      ]
+    }
+  }
+}

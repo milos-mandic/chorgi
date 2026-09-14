@@ -13,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.webhook import (
     MAX_BODY_SIZE,
+    MAX_UPLOAD_BODY_SIZE,
     WebhookServer,
+    _body_limit,
     _parse_content_length,
     _parse_secret_path,
     _verify_fathom,
@@ -50,6 +52,22 @@ class TestParseContentLength(unittest.TestCase):
 
     def test_oversized(self):
         self.assertEqual(_parse_content_length(str(MAX_BODY_SIZE + 1)), 0)
+
+    def test_custom_limit(self):
+        n = MAX_BODY_SIZE + 1
+        self.assertEqual(_parse_content_length(str(n), MAX_UPLOAD_BODY_SIZE), n)
+
+
+class TestBodyLimit(unittest.TestCase):
+    def test_default_routes_keep_1mb(self):
+        for path in ("/api/tasks", "/api/social/posts", "/api/social/posts/sp_1", "/api/social/move"):
+            with self.subTest(path=path):
+                self.assertEqual(_body_limit(path), MAX_BODY_SIZE)
+
+    def test_image_carrying_routes_get_the_upload_limit(self):
+        for path in ("/api/social/import", "/api/social/posts/sp_1/image"):
+            with self.subTest(path=path):
+                self.assertEqual(_body_limit(path), MAX_UPLOAD_BODY_SIZE)
 
 
 class TestVerifyFathom(unittest.TestCase):

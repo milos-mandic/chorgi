@@ -1,8 +1,8 @@
 """Nightly backup of durable state — stdlib only.
 
 Backs up knowledge.db (via the sqlite3 backup API, safe against concurrent
-writers in WAL mode), schedules/, memory files, local chat conversations, and
-skill workspace JSONs into dated directories under .personal/backups/,
+writers in WAL mode), schedules/, memory files, local chat conversations, social
+post images, and skill workspace JSONs into dated directories under .personal/backups/,
 pruning to the most recent KEEP_DAYS.
 """
 
@@ -44,6 +44,7 @@ def run_backup(base_dir: Path = BASE_DIR, now: datetime | None = None) -> str:
         ("schedules", base_dir / "schedules"),
         ("memory", personal / "memory"),
         ("local_chat", personal / "local_chat"),
+        ("social_images", base_dir / "skills" / "social" / "workspace" / "images"),
     ):
         if src_dir.is_dir():
             shutil.copytree(
