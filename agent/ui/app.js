@@ -581,9 +581,9 @@ function formatPrice(amount, currency) {
 }
 
 function renderShopping() {
-  const container = document.getElementById("shopping-grid");
-  if (!container) return;
-  container.innerHTML = "";
+  const tbody = document.getElementById("shopping-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
   const q = shoppingFilter.toLowerCase();
   let items = state.shopping || [];
   if (!shoppingShowBought) items = items.filter((s) => !s.bought);
@@ -610,34 +610,34 @@ function renderShopping() {
 
   if (!items.length) {
     const filtered = q || shoppingMinPrice !== null || shoppingMaxPrice !== null;
-    container.appendChild(filtered
+    const cell = el("td", { colspan: "5" }, filtered
       ? emptyState("No matches", "No items match the current search or price filter.")
       : emptyState("Nothing on the list yet", "Click “Add item”, paste a product link, and set a price."));
+    tbody.appendChild(el("tr", {}, cell));
     return;
   }
-  for (const s of items) container.appendChild(shoppingCard(s));
+  for (const s of items) tbody.appendChild(shoppingRow(s));
 }
 
-function shoppingCard(s) {
-  const card = el("div", { class: "shopping-card" + (s.bought ? " bought" : "") });
+function shoppingRow(s) {
+  const row = el("tr", { class: "shopping-row" + (s.bought ? " bought" : "") });
 
   const thumb = el("a", { class: "shopping-thumb", href: s.url, target: "_blank", rel: "noopener" });
   if (s.image) thumb.appendChild(el("img", { src: s.image, alt: "", loading: "lazy" }));
-  else thumb.appendChild(el("div", { class: "shopping-thumb-fallback" }, (s.source || "🛒").slice(0, 12)));
-  card.appendChild(thumb);
+  else thumb.appendChild(el("div", { class: "shopping-thumb-fallback" }, "🛒"));
+  const text = el("div", { class: "shopping-item-text" },
+    el("a", { class: "shopping-title", href: s.url, target: "_blank", rel: "noopener" }, s.title || s.url));
+  if (s.notes) text.appendChild(el("div", { class: "shopping-summary" }, s.notes));
+  row.appendChild(el("td", {}, el("div", { class: "shopping-item-cell" }, thumb, text)));
 
-  const body = el("div", { class: "shopping-body" });
-  body.appendChild(el("a", { class: "shopping-title", href: s.url, target: "_blank", rel: "noopener" }, s.title || s.url));
-
-  body.appendChild(el("div", { class: "shopping-price" }, formatPrice(s.amount, s.currency)));
+  row.appendChild(el("td", { class: "num" }, el("span", { class: "shopping-price" }, formatPrice(s.amount, s.currency))));
 
   const meta = el("div", { class: "shopping-meta" });
   if (s.category) meta.appendChild(el("span", { class: "shopping-chip cat" }, s.category));
-  if (s.source) meta.appendChild(el("span", { class: "shopping-chip" }, s.source));
   for (const tag of (s.tags || [])) meta.appendChild(el("span", { class: "shopping-chip tag" }, tag));
-  if (meta.children.length) body.appendChild(meta);
+  row.appendChild(el("td", {}, meta.children.length ? meta : "—"));
 
-  if (s.notes) body.appendChild(el("div", { class: "shopping-summary" }, s.notes));
+  row.appendChild(el("td", { class: "muted small" }, s.source || "—"));
 
   const actions = el("div", { class: "actions" });
   actions.appendChild(el("button", {
@@ -663,10 +663,9 @@ function shoppingCard(s) {
       poll();
     }
   }, "Delete"));
-  body.appendChild(actions);
+  row.appendChild(el("td", {}, actions));
 
-  card.appendChild(body);
-  return card;
+  return row;
 }
 
 // ---- LinkedIn ----
